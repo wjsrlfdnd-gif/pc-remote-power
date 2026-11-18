@@ -491,20 +491,52 @@
     }
 
     /* Landscape compact phone support */
+    @media (max-width: 420px) {
+      .topbar { padding: 8px 10px; gap: 6px; }
+      .brand { gap: 8px; }
+      .brand img { width: 30px; height: 30px; }
+      .brand-title { font-size: 13.5px; }
+      .chip-btn { padding: 6px 8px; font-size: 11px; }
+    }
+
     @media (max-height: 520px) and (orientation: landscape) {
       .shell {
         max-width: 820px;
-        gap: 6px;
-        padding: 8px 12px;
+        gap: 5px;
+        padding: 6px 12px;
       }
-      .topbar { padding: 7px 10px; }
+      .topbar { padding: 5px 10px; }
+      .brand img { width: 26px; height: 26px; }
+      .brand-title { font-size: 13px; }
+      .brand-sub { font-size: 10px; }
+      .chip-btn { padding: 5px 9px; font-size: 11px; }
+      .server-strip, .option-strip { padding: 5px 10px; font-size: 11px; }
+      .status-card { padding: 6px 10px; gap: 5px; }
+      .status-badge { padding: 3px 9px; font-size: 11px; }
+      .metrics-grid { gap: 6px; }
+      .metric-box {
+        padding: 4px 8px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 6px;
+      }
+      .metric-label { margin-bottom: 0; }
       .action-grid {
         grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 7px;
+        gap: 6px;
       }
-      .power-btn { min-height: 60px; padding: 9px 10px; }
-      .status-card { padding: 8px 12px; gap: 6px; }
-      .metric-box { padding: 5px 8px; }
+      .power-btn { min-height: 48px; padding: 6px 9px; gap: 2px; border-radius: 12px; }
+      .power-btn .icon-row { font-size: 12.5px; gap: 5px; }
+      .power-btn .sub {
+        font-size: 10px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 100%;
+      }
+      .result-banner { padding: 6px 10px; font-size: 11px; }
+      .footer-row { padding: 0 2px; font-size: 10px; }
     }
   </style>
 </head>
@@ -515,7 +547,7 @@
       <div class="brand">
         <img src="./icon.svg" alt="앱 아이콘" />
         <div style="min-width:0;">
-          <div class="brand-title">⚡ PC 원격 전원 관리</div>
+          <div class="brand-title">PC 원격 전원 관리</div>
           <div id="pcTitleLabel" class="brand-sub">서버 미설정 · 로컬 데모 대기</div>
         </div>
       </div>
@@ -637,7 +669,7 @@
       </button>
 
       <button id="btnShutdown" type="button" class="power-btn act-off" data-action="off">
-        <div class="icon-row">⏻ PC 종료</div>
+        <div class="icon-row"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fb7185" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg> PC 종료</div>
         <div class="sub">안전하게 시스템 전원 끄기</div>
       </button>
 
