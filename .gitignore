@@ -1,0 +1,28 @@
+# 빌드 산출물 및 배포 폴더
+bin/
+obj/
+app/
+app-staging/
+web-app/
+web-app-staging/
+dist/
+*.user
+*.suo
+.vs/
+
+# 민감한 설정 파일 (토큰·비밀번호·개인 네트워크 정보 보호)
+config.json
+web-config.json
+local-config.json
+relay/relay-config.json
+relay-config.json
+*.local.json
+.env*
+
+# 런타임 로그 및 임시·OS 파일
+logs/
+*.log
+*.log.old
+relay/wol_relay.txt
+.DS_Store
+Thumbs.db

@@ -1,0 +1,1109 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#020617" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="원격전원" />
+  <title>PC 원격 전원 관리</title>
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="./icon-192.png" />
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg-0: #020617;
+      --bg-1: #0b1224;
+      --card: rgba(15, 23, 42, 0.88);
+      --border: rgba(148, 163, 184, 0.2);
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --cyan: #22d3ee;
+      --emerald: #34d399;
+      --amber: #fbbf24;
+      --rose: #fb7185;
+      --indigo: #818cf8;
+    }
+
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      min-height: 100dvh;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Pretendard", "Noto Sans KR", sans-serif;
+      background:
+        radial-gradient(circle at 12% 0%, rgba(14, 165, 233, 0.16), transparent 42%),
+        radial-gradient(circle at 88% 100%, rgba(99, 102, 241, 0.14), transparent 44%),
+        linear-gradient(180deg, var(--bg-1), var(--bg-0));
+      color: var(--text);
+    }
+
+    .shell {
+      max-width: 560px;
+      margin: 0 auto;
+      min-height: 100dvh;
+      padding: max(12px, env(safe-area-inset-top)) 14px max(14px, env(safe-area-inset-bottom));
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      backdrop-filter: blur(12px);
+      box-shadow: 0 12px 32px rgba(2, 6, 23, 0.55);
+    }
+
+    /* Header */
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 10px 12px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .brand img {
+      width: 34px;
+      height: 34px;
+      border-radius: 10px;
+      flex-shrink: 0;
+    }
+
+    .brand-title {
+      font-size: 15px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .brand-sub {
+      font-size: 11px;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .top-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    button {
+      font: inherit;
+      color: inherit;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: transform 0.12s ease, opacity 0.12s ease, background-color 0.15s ease, border-color 0.15s ease;
+    }
+    button:active:not(:disabled) { transform: scale(0.97); }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    .chip-btn {
+      padding: 7px 10px;
+      border-radius: 11px;
+      background: rgba(30, 41, 59, 0.9);
+      border-color: rgba(148, 163, 184, 0.25);
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .chip-btn.install-ready {
+      background: linear-gradient(135deg, rgba(6, 182, 212, 0.28), rgba(16, 185, 129, 0.25));
+      border-color: rgba(34, 211, 238, 0.6);
+      color: #a5f3fc;
+    }
+
+    /* Server summary & collapsible config */
+    .server-strip {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 9px 12px;
+      font-size: 12px;
+    }
+    .server-summary-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+    .mode-pill {
+      padding: 2px 7px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 800;
+      background: rgba(56, 189, 248, 0.15);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      color: #7dd3fc;
+      flex-shrink: 0;
+    }
+    .server-url-preview {
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .config-panel {
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+    }
+    .hidden { display: none !important; }
+
+    .field-row {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .field-label {
+      font-size: 11px;
+      font-weight: 700;
+      color: #cbd5e1;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .field-grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    input, select {
+      width: 100%;
+      padding: 9px 11px;
+      border-radius: 10px;
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      background: rgba(2, 6, 23, 0.85);
+      color: var(--text);
+      font: inherit;
+      font-size: 13px;
+      outline: none;
+    }
+    input:focus, select:focus {
+      border-color: var(--cyan);
+      box-shadow: 0 0 0 2px rgba(34, 211, 238, 0.18);
+    }
+
+    .token-wrap {
+      display: flex;
+      gap: 6px;
+    }
+    .token-wrap input { flex: 1; min-width: 0; }
+
+    .btn-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+    }
+    .btn-primary {
+      flex: 1;
+      min-width: 130px;
+      padding: 9px 12px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #06b6d4, #0284c7);
+      color: #020617;
+      font-size: 13px;
+      font-weight: 800;
+    }
+    .btn-secondary {
+      padding: 9px 11px;
+      border-radius: 10px;
+      background: rgba(30, 41, 59, 0.95);
+      border-color: rgba(148, 163, 184, 0.25);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    /* Status card */
+    .status-card {
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .status-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 11px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 800;
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      background: rgba(15, 23, 42, 0.9);
+    }
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--muted);
+    }
+    .status-online {
+      border-color: rgba(52, 211, 153, 0.45);
+      background: rgba(6, 78, 59, 0.45);
+      color: #a7f3d0;
+    }
+    .status-online .dot {
+      background: var(--emerald);
+      box-shadow: 0 0 10px var(--emerald);
+    }
+    .status-offline {
+      border-color: rgba(251, 191, 36, 0.4);
+      background: rgba(120, 53, 15, 0.35);
+      color: #fde68a;
+    }
+    .status-offline .dot { background: var(--amber); }
+    .status-error {
+      border-color: rgba(251, 113, 133, 0.45);
+      background: rgba(136, 19, 55, 0.35);
+      color: #fecdd3;
+    }
+    .status-error .dot { background: var(--rose); }
+
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 7px;
+    }
+    .metric-box {
+      padding: 8px 9px;
+      border-radius: 11px;
+      background: rgba(2, 6, 23, 0.65);
+      border: 1px solid rgba(148, 163, 184, 0.14);
+      min-width: 0;
+    }
+    .metric-label {
+      font-size: 10px;
+      color: var(--muted);
+      margin-bottom: 2px;
+    }
+    .metric-val {
+      font-size: 12px;
+      font-weight: 800;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .alert-box {
+      padding: 8px 10px;
+      border-radius: 10px;
+      font-size: 11px;
+      line-height: 1.45;
+      background: rgba(245, 158, 11, 0.12);
+      border: 1px solid rgba(251, 191, 36, 0.38);
+      color: #fde68a;
+    }
+
+    /* Quick option strip */
+    .option-strip {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 9px 12px;
+      font-size: 12px;
+    }
+    .switch-wrap {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 700;
+    }
+    .toggle-btn {
+      width: 44px;
+      height: 24px;
+      border-radius: 999px;
+      padding: 2px;
+      background: rgba(51, 65, 85, 0.9);
+      border: 1px solid rgba(148, 163, 184, 0.3);
+      display: flex;
+      align-items: center;
+      transition: background-color 0.15s ease;
+    }
+    .toggle-btn[aria-checked="true"] {
+      background: #0891b2;
+      border-color: #22d3ee;
+      justify-content: flex-end;
+    }
+    .toggle-knob {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #f8fafc;
+    }
+
+    /* Main Action Grid */
+    .action-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 9px;
+    }
+    .power-btn {
+      padding: 14px 12px;
+      border-radius: 15px;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 4px;
+      text-align: left;
+      background: rgba(15, 23, 42, 0.92);
+      border: 1px solid rgba(148, 163, 184, 0.22);
+      box-shadow: 0 8px 20px rgba(2, 6, 23, 0.45);
+      min-height: 76px;
+      justify-content: center;
+    }
+    .power-btn .icon-row {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 14px;
+      font-weight: 800;
+    }
+    .power-btn .sub {
+      font-size: 11px;
+      color: var(--muted);
+      line-height: 1.25;
+    }
+
+    .act-on {
+      border-color: rgba(52, 211, 153, 0.45);
+      background: linear-gradient(155deg, rgba(6, 78, 59, 0.52), rgba(15, 23, 42, 0.95));
+    }
+    .act-app {
+      border-color: rgba(56, 189, 248, 0.45);
+      background: linear-gradient(155deg, rgba(12, 74, 110, 0.55), rgba(15, 23, 42, 0.95));
+    }
+    .act-sleep {
+      border-color: rgba(129, 140, 248, 0.45);
+      background: linear-gradient(155deg, rgba(49, 46, 129, 0.48), rgba(15, 23, 42, 0.95));
+    }
+    .act-reboot {
+      border-color: rgba(251, 191, 36, 0.45);
+      background: linear-gradient(155deg, rgba(120, 53, 15, 0.42), rgba(15, 23, 42, 0.95));
+    }
+    .act-off {
+      border-color: rgba(251, 113, 133, 0.5);
+      background: linear-gradient(155deg, rgba(136, 19, 55, 0.5), rgba(15, 23, 42, 0.95));
+    }
+    .act-cancel {
+      border-color: rgba(148, 163, 184, 0.35);
+    }
+
+    /* Feedback banner & footer */
+    .result-banner {
+      padding: 10px 12px;
+      font-size: 12px;
+      line-height: 1.4;
+      color: #cbd5e1;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .footer-row {
+      margin-top: auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 11px;
+      color: var(--muted);
+      padding: 2px 4px;
+    }
+
+    /* Modals */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 50;
+      background: rgba(2, 6, 23, 0.8);
+      backdrop-filter: blur(6px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+    .modal-card {
+      width: 100%;
+      max-width: 410px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .modal-title {
+      font-size: 16px;
+      font-weight: 800;
+      margin: 0;
+    }
+    .modal-desc {
+      font-size: 13px;
+      color: #cbd5e1;
+      line-height: 1.5;
+      margin: 0;
+    }
+    .guide-list {
+      margin: 0;
+      padding-left: 18px;
+      font-size: 12px;
+      color: #cbd5e1;
+      line-height: 1.6;
+    }
+    .guide-box {
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: rgba(2, 6, 23, 0.72);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+    }
+    .guide-box h4 {
+      margin: 0 0 5px;
+      font-size: 12px;
+      color: #7dd3fc;
+    }
+
+    /* Landscape compact phone support */
+    @media (max-height: 520px) and (orientation: landscape) {
+      .shell {
+        max-width: 820px;
+        gap: 6px;
+        padding: 8px 12px;
+      }
+      .topbar { padding: 7px 10px; }
+      .action-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 7px;
+      }
+      .power-btn { min-height: 60px; padding: 9px 10px; }
+      .status-card { padding: 8px 12px; gap: 6px; }
+      .metric-box { padding: 5px 8px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <!-- Top Bar -->
+    <header class="card topbar">
+      <div class="brand">
+        <img src="./icon.svg" alt="앱 아이콘" />
+        <div style="min-width:0;">
+          <div class="brand-title">⚡ PC 원격 전원 관리</div>
+          <div id="pcTitleLabel" class="brand-sub">서버 미설정 · 로컬 데모 대기</div>
+        </div>
+      </div>
+      <div class="top-actions">
+        <button id="btnInstallApp" type="button" class="chip-btn">📲 앱 설치</button>
+        <button id="btnToggleConfig" type="button" class="chip-btn" aria-expanded="false">⚙️ 서버 설정</button>
+      </div>
+    </header>
+
+    <!-- Compact Server Summary Strip -->
+    <section class="card server-strip">
+      <div class="server-summary-left">
+        <span id="modeBadge" class="mode-pill">중계기(WoL)</span>
+        <span id="serverSummaryText" class="server-url-preview">연결할 서버 주소와 토큰을 설정하세요</span>
+      </div>
+      <button id="btnRefresh" type="button" class="chip-btn">🔄 새로고침</button>
+    </section>
+
+    <!-- Collapsible Server Settings Panel -->
+    <section id="configCard" class="card config-panel hidden" aria-label="서버 연결 설정">
+      <div class="field-grid-2">
+        <div class="field-row">
+          <label class="field-label" for="inputMode">연결 모드</label>
+          <select id="inputMode">
+            <option value="relay">중계기 (WoL 켜기+끄기)</option>
+            <option value="direct">PC 직접 연결 (켜진 PC)</option>
+          </select>
+        </div>
+        <div class="field-row">
+          <label class="field-label" for="inputPcName">PC 이름 (표시용)</label>
+          <input id="inputPcName" type="text" placeholder="예: 내 데스크톱 PC" maxlength="40" />
+        </div>
+      </div>
+
+      <div class="field-row">
+        <label class="field-label" for="inputServerUrl">
+          <span>백엔드 서버 주소</span>
+          <span style="color:var(--muted); font-weight:500;">HTTPS 권장</span>
+        </label>
+        <input id="inputServerUrl" type="url" inputmode="url" placeholder="https://your-relay.ts.net 또는 http://192.168.0.10:18090" />
+      </div>
+
+      <div class="field-row">
+        <label class="field-label" for="inputToken">인증 토큰 (X-Auth-Token)</label>
+        <div class="token-wrap">
+          <input id="inputToken" type="password" autocomplete="off" placeholder="서버에 설정된 토큰 입력" />
+          <button id="btnToggleTokenVis" type="button" class="btn-secondary">보기</button>
+        </div>
+      </div>
+
+      <div class="btn-row">
+        <button id="btnSaveConfig" type="button" class="btn-primary">💾 저장 후 상태 조회</button>
+        <button id="btnCopyShareLink" type="button" class="btn-secondary">🔗 주소 복사</button>
+        <button id="btnResetConfig" type="button" class="btn-secondary">초기화</button>
+      </div>
+    </section>
+
+    <!-- Live PC Status Card -->
+    <section class="card status-card">
+      <div class="status-head">
+        <div id="statusBadge" class="status-badge">
+          <span class="dot"></span>
+          <span id="statusText">설정 대기 중</span>
+        </div>
+        <span id="lastCheckedLabel" style="font-size:11px; color:var(--muted);">최근 확인: -</span>
+      </div>
+
+      <div class="metrics-grid">
+        <div class="metric-box">
+          <div class="metric-label">가동 시간</div>
+          <div id="metricUptime" class="metric-val">-</div>
+        </div>
+        <div class="metric-box">
+          <div class="metric-label">Antigravity</div>
+          <div id="metricAgStatus" class="metric-val">-</div>
+        </div>
+        <div class="metric-box">
+          <div class="metric-label">세션 / 어댑터</div>
+          <div id="metricSession" class="metric-val">-</div>
+        </div>
+      </div>
+
+      <div id="mixedContentWarning" class="alert-box hidden">
+        ⚠️ <strong>HTTPS → HTTP 차단 안내:</strong> 현재 GitHub Pages(<code>https://</code>)에서 <code>http://</code> 주소를 호출하면 브라우저가 혼합 콘텐츠로 차단합니다. Tailscale Serve나 Cloudflare Tunnel의 <code>https://</code> 주소를 사용하고 백엔드에서 CORS를 허용하세요.
+      </div>
+    </section>
+
+    <!-- Quick Toggle Strip -->
+    <section class="card option-strip">
+      <div class="switch-wrap">
+        <button id="btnOneClickToggle" type="button" role="switch" aria-checked="false" class="toggle-btn" aria-label="원클릭 즉시 실행 토글">
+          <span class="toggle-knob"></span>
+        </button>
+        <span>원클릭 즉시 실행 (전원 확인창 생략)</span>
+      </div>
+      <span id="oneClickLabel" style="font-size:11px; color:var(--muted); font-weight:700;">안전 확인 ON</span>
+    </section>
+
+    <!-- Main 6 Power Control Actions -->
+    <section class="action-grid" aria-label="전원 제어 버튼">
+      <button id="btnPowerOn" type="button" class="power-btn act-on" data-action="on">
+        <div class="icon-row">⚡ PC 켜기 (WoL)</div>
+        <div class="sub">중계기에서 Magic Packet 전송</div>
+      </button>
+
+      <button id="btnStartAg" type="button" class="power-btn act-app" data-action="antigravity">
+        <div class="icon-row">🚀 Antigravity 실행</div>
+        <div class="sub">원격으로 작업 앱 즉시 기동</div>
+      </button>
+
+      <button id="btnSleep" type="button" class="power-btn act-sleep" data-action="sleep">
+        <div class="icon-row">🌙 절전 모드</div>
+        <div class="sub">현재 세션 유지 후 즉시 절전</div>
+      </button>
+
+      <button id="btnReboot" type="button" class="power-btn act-reboot" data-action="reboot">
+        <div class="icon-row">🔄 PC 재부팅</div>
+        <div class="sub">시스템 다시 시작 (약 5초 후)</div>
+      </button>
+
+      <button id="btnShutdown" type="button" class="power-btn act-off" data-action="off">
+        <div class="icon-row">⏻ PC 종료</div>
+        <div class="sub">안전하게 시스템 전원 끄기</div>
+      </button>
+
+      <button id="btnCancel" type="button" class="power-btn act-cancel" data-action="cancel">
+        <div class="icon-row">🛑 예약 취소</div>
+        <div class="sub">진행 중인 종료·재부팅 중단</div>
+      </button>
+    </section>
+
+    <!-- Feedback Banner -->
+    <section class="card result-banner" aria-live="polite">
+      <span id="resultMessage">ℹ️ 오른쪽 위 <strong>⚙️ 서버 설정</strong>에서 중계기/PC 주소를 입력하거나 <strong>📲 앱 설치</strong>로 홈 화면에 추가할 수 있습니다.</span>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer-row">
+      <span id="swStatusLabel">PWA 오프라인 엔진 준비 중</span>
+      <button id="btnOpenInstallHelp" type="button" class="chip-btn" style="padding:4px 8px; font-size:11px;">앱 설치 방법</button>
+    </footer>
+  </main>
+
+  <!-- Power Action Confirmation Modal -->
+  <div id="confirmModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+    <div class="card modal-card">
+      <h2 id="confirmTitle" class="modal-title">작업 확인</h2>
+      <p id="confirmDesc" class="modal-desc"></p>
+      <div class="btn-row">
+        <button id="btnConfirmCancel" type="button" class="btn-secondary" style="flex:1;">취소</button>
+        <button id="btnConfirmOk" type="button" class="btn-primary" style="flex:1;">실행</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- PWA Install Guide Modal -->
+  <div id="installModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="installTitle">
+    <div class="card modal-card">
+      <h2 id="installTitle" class="modal-title">📲 스마트폰 앱 설치 안내</h2>
+      <p class="modal-desc">브라우저 주소창 없이 단독 앱처럼 홈 화면에 바로 설치해 사용할 수 있습니다.</p>
+
+      <div id="nativeInstallRow" class="hidden">
+        <button id="btnTriggerNativeInstall" type="button" class="btn-primary" style="width:100%;">⬇️ 지금 앱으로 바로 설치</button>
+      </div>
+
+      <div class="guide-box">
+        <h4>Android (Chrome / Edge / 삼성 인터넷)</h4>
+        <ol class="guide-list">
+          <li>우측 상단 <strong>메뉴(⋮)</strong>를 누릅니다.</li>
+          <li><strong>앱 설치</strong> 또는 <strong>홈 화면에 추가</strong>를 선택합니다.</li>
+        </ol>
+      </div>
+
+      <div class="guide-box">
+        <h4>iPhone / iPad (Safari)</h4>
+        <ol class="guide-list">
+          <li>화면 하단 <strong>공유(⬆️)</strong> 버튼을 누릅니다.</li>
+          <li>아래로 내려 <strong>홈 화면에 추가</strong>를 선택합니다.</li>
+        </ol>
+      </div>
+
+      <button id="btnCloseInstallModal" type="button" class="btn-secondary" style="width:100%;">닫기</button>
+    </div>
+  </div>
+
+  <script>
+    (() => {
+      const STORAGE_KEYS = {
+        serverUrl: 'pc_remote_server_url',
+        mode: 'pc_remote_mode',
+        token: 'pc_remote_token',
+        pcName: 'pc_remote_pc_name',
+        oneClick: 'pc_remote_oneclick'
+      };
+
+      const ENDPOINTS = {
+        relay: {
+          status: { method: 'GET', path: '/api/pc/status' },
+          on: { method: 'POST', path: '/api/pc/on', label: 'PC 켜기 (WoL)' },
+          antigravity: { method: 'POST', path: '/api/pc/antigravity/start', label: 'Antigravity 실행' },
+          sleep: { method: 'POST', path: '/api/pc/sleep', label: '절전 모드', confirm: true },
+          reboot: { method: 'POST', path: '/api/pc/reboot', label: 'PC 재부팅', confirm: true },
+          off: { method: 'POST', path: '/api/pc/off', label: 'PC 종료', confirm: true },
+          cancel: { method: 'POST', path: '/api/pc/cancel', label: '예약 취소' }
+        },
+        direct: {
+          status: { method: 'GET', path: '/api/status' },
+          on: null,
+          antigravity: { method: 'POST', path: '/api/app/antigravity/start', label: 'Antigravity 실행' },
+          sleep: { method: 'POST', path: '/api/power/sleep', label: '절전 모드', confirm: true },
+          reboot: { method: 'POST', path: '/api/power/reboot', label: 'PC 재부팅', confirm: true },
+          off: { method: 'POST', path: '/api/power/shutdown', label: 'PC 종료', confirm: true },
+          cancel: { method: 'POST', path: '/api/power/cancel', label: '예약 취소' }
+        }
+      };
+
+      const el = (id) => document.getElementById(id);
+
+      const state = {
+        serverUrl: '',
+        mode: 'relay',
+        token: '',
+        pcName: '',
+        oneClick: false,
+        deferredPrompt: null,
+        pendingAction: null
+      };
+
+      function sanitizeUrl(raw) {
+        const trimmed = (raw || '').trim().replace(/\/+$/, '');
+        if (!trimmed) return '';
+        try {
+          const parsed = new URL(trimmed);
+          if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '';
+          return parsed.origin + parsed.pathname.replace(/\/+$/, '');
+        } catch {
+          return '';
+        }
+      }
+
+      function loadState() {
+        const params = new URLSearchParams(window.location.search);
+        let imported = false;
+
+        const qServer = sanitizeUrl(params.get('server'));
+        if (qServer) {
+          localStorage.setItem(STORAGE_KEYS.serverUrl, qServer);
+          imported = true;
+        }
+        const qMode = params.get('mode');
+        if (qMode === 'relay' || qMode === 'direct') {
+          localStorage.setItem(STORAGE_KEYS.mode, qMode);
+          imported = true;
+        }
+        const qToken = params.get('token');
+        if (qToken !== null && qToken.trim()) {
+          localStorage.setItem(STORAGE_KEYS.token, qToken.trim());
+          imported = true;
+        }
+        const qName = params.get('name');
+        if (qName !== null && qName.trim()) {
+          localStorage.setItem(STORAGE_KEYS.pcName, qName.trim().slice(0, 40));
+          imported = true;
+        }
+
+        if (imported && window.history && window.history.replaceState) {
+          window.history.replaceState({}, '', window.location.pathname);
+        }
+
+        state.serverUrl = sanitizeUrl(localStorage.getItem(STORAGE_KEYS.serverUrl) || '');
+        const savedMode = localStorage.getItem(STORAGE_KEYS.mode);
+        state.mode = savedMode === 'direct' ? 'direct' : 'relay';
+        state.token = localStorage.getItem(STORAGE_KEYS.token) || '';
+        state.pcName = localStorage.getItem(STORAGE_KEYS.pcName) || '';
+        state.oneClick = localStorage.getItem(STORAGE_KEYS.oneClick) === 'true';
+      }
+
+      function syncFormAndUi() {
+        el('inputMode').value = state.mode;
+        el('inputPcName').value = state.pcName;
+        el('inputServerUrl').value = state.serverUrl;
+        el('inputToken').value = state.token;
+
+        el('modeBadge').textContent = state.mode === 'relay' ? '중계기(WoL)' : 'PC 직접';
+        el('pcTitleLabel').textContent = state.pcName
+          ? `${state.pcName} · ${state.mode === 'relay' ? '중계기 모드' : '직접 연결'}`
+          : (state.serverUrl ? '서버 연결 준비 완료' : '서버 미설정 · 연결 정보 필요');
+
+        el('serverSummaryText').textContent = state.serverUrl
+          ? state.serverUrl.replace(/^https?:\/\//, '')
+          : '연결할 서버 주소와 토큰을 설정하세요';
+
+        const oneClickBtn = el('btnOneClickToggle');
+        oneClickBtn.setAttribute('aria-checked', String(state.oneClick));
+        el('oneClickLabel').textContent = state.oneClick ? '즉시 실행 ON' : '안전 확인 ON';
+
+        // Direct mode cannot wake a powered-off PC via WoL
+        const powerOnBtn = el('btnPowerOn');
+        powerOnBtn.disabled = state.mode === 'direct';
+        powerOnBtn.querySelector('.sub').textContent = state.mode === 'direct'
+          ? 'PC 직접 모드에서는 WoL 미지원'
+          : '중계기에서 Magic Packet 전송';
+
+        const isHttpsPage = window.location.protocol === 'https:';
+        const isHttpTarget = state.serverUrl.startsWith('http://');
+        el('mixedContentWarning').classList.toggle('hidden', !(isHttpsPage && isHttpTarget));
+      }
+
+      function setStatusBadge(kind, text) {
+        const badge = el('statusBadge');
+        badge.classList.remove('status-online', 'status-offline', 'status-error');
+        if (kind === 'online') badge.classList.add('status-online');
+        else if (kind === 'offline') badge.classList.add('status-offline');
+        else if (kind === 'error') badge.classList.add('status-error');
+        el('statusText').textContent = text;
+      }
+
+      function setResultMessage(text, isError = false) {
+        const box = el('resultMessage');
+        box.style.color = isError ? '#fecdd3' : '#cbd5e1';
+        box.textContent = text;
+      }
+
+      function toggleConfig(forceOpen) {
+        const card = el('configCard');
+        const btn = el('btnToggleConfig');
+        const open = typeof forceOpen === 'boolean' ? forceOpen : card.classList.contains('hidden');
+        card.classList.toggle('hidden', !open);
+        btn.setAttribute('aria-expanded', String(open));
+      }
+
+      async function apiFetch(endpoint) {
+        if (!state.serverUrl) {
+          throw new Error('먼저 ⚙️ 서버 설정에서 백엔드 서버 주소를 입력하세요.');
+        }
+
+        const headers = { 'Accept': 'application/json' };
+        if (state.token) {
+          headers['X-Auth-Token'] = state.token;
+        }
+        if (endpoint.method === 'POST') {
+          headers['Content-Type'] = 'application/json';
+        }
+
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 8000);
+        try {
+          const response = await fetch(`${state.serverUrl}${endpoint.path}`, {
+            method: endpoint.method,
+            headers,
+            body: endpoint.method === 'POST' ? '{}' : undefined,
+            signal: controller.signal
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok || data.success === false) {
+            throw new Error(data.message || data.error || `HTTP ${response.status} 오류`);
+          }
+          return data;
+        } catch (err) {
+          if (err.name === 'AbortError') {
+            throw new Error('요청 시간 초과(8초) — 서버/네트워크 상태를 확인하세요.');
+          }
+          if (err.message === 'Failed to fetch') {
+            throw new Error('연결 실패 — 서버 실행 여부, HTTPS/혼합 콘텐츠, CORS 허용 설정을 확인하세요.');
+          }
+          throw err;
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+
+      async function refreshStatus() {
+        if (!state.serverUrl) {
+          setStatusBadge('idle', '설정 대기 중');
+          el('metricUptime').textContent = '-';
+          el('metricAgStatus').textContent = '-';
+          el('metricSession').textContent = '-';
+          el('lastCheckedLabel').textContent = '최근 확인: -';
+          return;
+        }
+
+        setStatusBadge('idle', '조회 중...');
+        try {
+          const ep = ENDPOINTS[state.mode].status;
+          const data = await apiFetch(ep);
+          const pc = state.mode === 'relay' ? (data.pc || {}) : data;
+          const online = state.mode === 'relay' ? Boolean(data.online) : Boolean(data.success);
+
+          if (!state.pcName && (pc.displayName || pc.machineName)) {
+            el('pcTitleLabel').textContent = `${pc.displayName || pc.machineName} · ${state.mode === 'relay' ? '중계기' : '직접'}`;
+          }
+
+          setStatusBadge(online ? 'online' : 'offline', online ? 'PC 온라인' : 'PC 오프라인');
+          el('metricUptime').textContent = pc.uptimeText || (online ? '가동 중' : '전원 꺼짐');
+          el('metricAgStatus').textContent = pc.antigravityRunning ? '실행 중' : (online ? '미실행' : '-');
+
+          const adapterCount = Array.isArray(pc.adapters) ? pc.adapters.length : 0;
+          const sessionText = pc.userSessionActive === true ? '활성' : (pc.userSessionActive === false ? '잠김/없음' : '-');
+          el('metricSession').textContent = online ? `${sessionText} · ${adapterCount}NIC` : '대기';
+          el('lastCheckedLabel').textContent = `최근 확인: ${new Date().toLocaleTimeString('ko-KR')}`;
+          setResultMessage(online ? '✅ PC 상태를 정상적으로 불러왔습니다.' : '⚠️ PC가 꺼져 있습니다. [PC 켜기(WoL)]로 부팅할 수 있습니다.');
+        } catch (err) {
+          setStatusBadge('error', '연결 오류');
+          el('lastCheckedLabel').textContent = `최근 시도: ${new Date().toLocaleTimeString('ko-KR')}`;
+          setResultMessage(`❌ ${err.message}`, true);
+        }
+      }
+
+      async function executeAction(actionKey) {
+        const ep = ENDPOINTS[state.mode][actionKey];
+        if (!ep) {
+          setResultMessage('ℹ️ 현재 연결 모드에서는 지원하지 않는 동작입니다.', true);
+          return;
+        }
+        setResultMessage(`⏳ [${ep.label}] 명령 전송 중...`);
+        try {
+          const data = await apiFetch(ep);
+          setResultMessage(`✅ ${data.message || `${ep.label} 명령이 완료되었습니다.`}`);
+          setTimeout(refreshStatus, 1000);
+        } catch (err) {
+          setResultMessage(`❌ [${ep.label}] ${err.message}`, true);
+        }
+      }
+
+      function requestAction(actionKey) {
+        const ep = ENDPOINTS[state.mode][actionKey];
+        if (!ep) return;
+        if (!state.serverUrl) {
+          toggleConfig(true);
+          setResultMessage('⚠️ 먼저 서버 주소와 인증 토큰을 저장하세요.', true);
+          return;
+        }
+        if (ep.confirm && !state.oneClick) {
+          state.pendingAction = actionKey;
+          el('confirmTitle').textContent = `⚠️ ${ep.label}`;
+          el('confirmDesc').textContent = `정말로 [${ep.label}] 명령을 원격 PC에 전송할까요?`;
+          el('confirmModal').classList.remove('hidden');
+          return;
+        }
+        executeAction(actionKey);
+      }
+
+      function openInstallModal() {
+        el('nativeInstallRow').classList.toggle('hidden', !state.deferredPrompt);
+        el('installModal').classList.remove('hidden');
+      }
+
+      async function triggerInstall() {
+        if (!state.deferredPrompt) {
+          openInstallModal();
+          return;
+        }
+        state.deferredPrompt.prompt();
+        const choice = await state.deferredPrompt.userChoice.catch(() => ({ outcome: 'dismissed' }));
+        if (choice.outcome === 'accepted') {
+          setResultMessage('✅ 홈 화면에 앱 설치가 시작되었습니다.');
+          el('installModal').classList.add('hidden');
+        }
+        state.deferredPrompt = null;
+        el('btnInstallApp').classList.remove('install-ready');
+      }
+
+      function wireEvents() {
+        el('btnToggleConfig').addEventListener('click', () => toggleConfig());
+        el('btnRefresh').addEventListener('click', refreshStatus);
+
+        el('btnToggleTokenVis').addEventListener('click', () => {
+          const inp = el('inputToken');
+          const show = inp.type === 'password';
+          inp.type = show ? 'text' : 'password';
+          el('btnToggleTokenVis').textContent = show ? '숨김' : '보기';
+        });
+
+        el('btnSaveConfig').addEventListener('click', () => {
+          const url = sanitizeUrl(el('inputServerUrl').value);
+          if (!url) {
+            setResultMessage('❌ 올바른 http:// 또는 https:// 서버 주소를 입력하세요.', true);
+            return;
+          }
+          state.serverUrl = url;
+          state.mode = el('inputMode').value === 'direct' ? 'direct' : 'relay';
+          state.token = el('inputToken').value.trim();
+          state.pcName = el('inputPcName').value.trim().slice(0, 40);
+
+          localStorage.setItem(STORAGE_KEYS.serverUrl, state.serverUrl);
+          localStorage.setItem(STORAGE_KEYS.mode, state.mode);
+          localStorage.setItem(STORAGE_KEYS.token, state.token);
+          localStorage.setItem(STORAGE_KEYS.pcName, state.pcName);
+
+          syncFormAndUi();
+          toggleConfig(false);
+          refreshStatus();
+        });
+
+        el('btnResetConfig').addEventListener('click', () => {
+          Object.values(STORAGE_KEYS).forEach((k) => localStorage.removeItem(k));
+          state.serverUrl = '';
+          state.mode = 'relay';
+          state.token = '';
+          state.pcName = '';
+          state.oneClick = false;
+          syncFormAndUi();
+          refreshStatus();
+          setResultMessage('ℹ️ 저장된 서버 연결 정보를 모두 초기화했습니다.');
+        });
+
+        el('btnCopyShareLink').addEventListener('click', async () => {
+          const rawUrl = sanitizeUrl(el('inputServerUrl').value) || state.serverUrl;
+          if (!rawUrl) {
+            setResultMessage('⚠️ 복사할 서버 주소를 먼저 입력하세요.', true);
+            return;
+          }
+          const shareUrl = new URL(window.location.href);
+          shareUrl.search = '';
+          shareUrl.searchParams.set('server', rawUrl);
+          shareUrl.searchParams.set('mode', el('inputMode').value || state.mode);
+          const pcNameVal = (el('inputPcName').value || state.pcName).trim();
+          if (pcNameVal) shareUrl.searchParams.set('name', pcNameVal);
+
+          try {
+            await navigator.clipboard.writeText(shareUrl.toString());
+            setResultMessage('🔗 보안상 토큰을 제외한 서버 연결 링크를 복사했습니다.');
+          } catch {
+            setResultMessage(`🔗 공유 주소: ${shareUrl.toString()}`);
+          }
+        });
+
+        el('btnOneClickToggle').addEventListener('click', () => {
+          state.oneClick = !state.oneClick;
+          localStorage.setItem(STORAGE_KEYS.oneClick, String(state.oneClick));
+          syncFormAndUi();
+        });
+
+        document.querySelectorAll('.power-btn[data-action]').forEach((btn) => {
+          btn.addEventListener('click', () => requestAction(btn.dataset.action));
+        });
+
+        el('btnConfirmCancel').addEventListener('click', () => {
+          state.pendingAction = null;
+          el('confirmModal').classList.add('hidden');
+        });
+        el('btnConfirmOk').addEventListener('click', () => {
+          const actionKey = state.pendingAction;
+          state.pendingAction = null;
+          el('confirmModal').classList.add('hidden');
+          if (actionKey) executeAction(actionKey);
+        });
+
+        el('btnInstallApp').addEventListener('click', triggerInstall);
+        el('btnOpenInstallHelp').addEventListener('click', openInstallModal);
+        el('btnTriggerNativeInstall').addEventListener('click', triggerInstall);
+        el('btnCloseInstallModal').addEventListener('click', () => el('installModal').classList.add('hidden'));
+
+        window.addEventListener('beforeinstallprompt', (e) => {
+          e.preventDefault();
+          state.deferredPrompt = e;
+          el('btnInstallApp').classList.add('install-ready');
+          el('btnInstallApp').textContent = '📲 앱 다운로드';
+        });
+
+        window.addEventListener('appinstalled', () => {
+          state.deferredPrompt = null;
+          el('btnInstallApp').classList.remove('install-ready');
+          el('btnInstallApp').textContent = '✅ 설치됨';
+          setResultMessage('✅ 홈 화면 앱 설치가 완료되었습니다.');
+        });
+      }
+
+      async function registerSw() {
+        const swLabel = el('swStatusLabel');
+        if (!('serviceWorker' in navigator)) {
+          swLabel.textContent = '이 브라우저는 Service Worker를 지원하지 않습니다';
+          return;
+        }
+        try {
+          await navigator.serviceWorker.register('./sw.js', { scope: './' });
+          swLabel.textContent = 'PWA 앱 설치 · 오프라인 엔진 활성';
+        } catch {
+          swLabel.textContent = 'PWA 준비 (HTTPS/localhost에서 활성화)';
+        }
+      }
+
+      loadState();
+      syncFormAndUi();
+      wireEvents();
+      registerSw();
+      refreshStatus();
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>RemotePowerWeb</AssemblyName>
+    <RootNamespace>RemotePowerWeb</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PowerCore\PowerCore.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="..\icon-192.png" LogicalName="RemotePowerWeb.Assets.icon-192.png" />
+    <EmbeddedResource Include="..\icon-512.png" LogicalName="RemotePowerWeb.Assets.icon-512.png" />
+  </ItemGroup>
+
+</Project>

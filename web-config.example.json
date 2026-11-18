@@ -1,0 +1,8 @@
+{
+  "ListenPort": 18080,
+  "ApiToken": "CHANGE_ME_TO_STRONG_RANDOM_TOKEN",
+  "PcDisplayName": "Home-PC",
+  "ShutdownDelaySeconds": 5,
+  "DuckDnsDomain": "",
+  "DuckDnsToken": ""
+}

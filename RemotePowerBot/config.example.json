@@ -1,0 +1,10 @@
+{
+  "BotToken": "YOUR_DISCORD_BOT_TOKEN",
+  "NotifyChannelId": 0,
+  "AllowedUserIds": [
+    0
+  ],
+  "ShutdownDelaySeconds": 10,
+  "SendBootNotification": true,
+  "PcDisplayName": "Home-PC"
+}
