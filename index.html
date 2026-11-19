@@ -585,9 +585,9 @@
       <div class="field-row">
         <label class="field-label" for="inputServerUrl">
           <span>백엔드 서버 주소</span>
-          <span style="color:var(--muted); font-weight:500;">HTTPS 권장</span>
+          <span style="color:var(--muted); font-weight:500;">Cloudflare Tunnel HTTPS (VPN 불필요)</span>
         </label>
-        <input id="inputServerUrl" type="url" inputmode="url" placeholder="https://your-relay.ts.net 또는 http://192.168.0.10:18090" />
+        <input id="inputServerUrl" type="url" inputmode="url" placeholder="https://pc.mydomain.com 또는 https://xxxx.trycloudflare.com" />
       </div>
 
       <div class="field-row">
@@ -631,7 +631,7 @@
       </div>
 
       <div id="mixedContentWarning" class="alert-box hidden">
-        ⚠️ <strong>HTTPS → HTTP 차단 안내:</strong> 현재 GitHub Pages(<code>https://</code>)에서 <code>http://</code> 주소를 호출하면 브라우저가 혼합 콘텐츠로 차단합니다. Tailscale Serve나 Cloudflare Tunnel의 <code>https://</code> 주소를 사용하고 백엔드에서 CORS를 허용하세요.
+        ⚠️ <strong>HTTPS → HTTP 차단 안내:</strong> 현재 GitHub Pages(<code>https://</code>)에서 <code>http://</code> 주소를 호출하면 브라우저가 혼합 콘텐츠로 차단합니다. <strong>Cloudflare Tunnel(<code>cloudflared</code>)</strong>의 <code>https://</code> 주소를 입력하면 VPN이나 공유기 포트포워딩 없이 바로 연결됩니다.
       </div>
     </section>
 
@@ -823,6 +823,7 @@
         state.token = localStorage.getItem(STORAGE_KEYS.token) || '';
         state.pcName = localStorage.getItem(STORAGE_KEYS.pcName) || '';
         state.oneClick = localStorage.getItem(STORAGE_KEYS.oneClick) === 'true';
+        return imported;
       }
 
       function syncFormAndUi() {
@@ -1146,11 +1147,21 @@
         }
       }
 
-      loadState();
+      const importedFromLink = loadState();
       syncFormAndUi();
       wireEvents();
       registerSw();
-      refreshStatus();
+      if (state.serverUrl && !state.token) {
+        setStatusBadge('idle', '토큰 입력 필요');
+        toggleConfig(true);
+        setResultMessage(
+          importedFromLink
+            ? 'ℹ️ 서버 주소가 자동 입력되었습니다. 인증 토큰을 입력한 뒤 [저장 후 상태 조회]를 누르세요.'
+            : 'ℹ️ 인증 토큰을 입력한 뒤 [저장 후 상태 조회]를 누르세요.'
+        );
+      } else {
+        refreshStatus();
+      }
     })();
   </script>
 </body>

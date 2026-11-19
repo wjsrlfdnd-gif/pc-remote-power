@@ -1,0 +1,6 @@
+# Windows batch files must always use CRLF for cmd.exe compatibility (including GitHub Download ZIP)
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Shell scripts must use LF for Linux / Raspberry Pi / Android Termux
+*.sh text eol=lf

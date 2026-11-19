@@ -255,7 +255,7 @@ self.addEventListener('fetch', (event) => {
         <summary>📱 앱 설치 &amp; 원터치 단축어 설정 방법</summary>
         <div class="meta">
           <p><strong>1. 스마트폰 앱으로 설치 (PWA)</strong><br/>
-          - HTTPS 주소(예: <code>tailscale serve</code>)로 열면 Android Chrome에서 '앱 설치' 버튼이 바로 뜹니다.<br/>
+          - Cloudflare Tunnel(<code>cloudflared</code>) HTTPS 주소로 열면 VPN 없이 Android Chrome에서 '앱 설치' 버튼이 바로 뜹니다.<br/>
           - iPhone Safari는 <code>공유 → 홈 화면에 추가</code> 로 설치하세요.</p>
           <p><strong>2. 아이폰 단축어 / 안드로이드 HTTP Shortcuts (완전 1터치)</strong><br/>
           - Method: <code>POST</code><br/>

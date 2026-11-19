@@ -14,6 +14,7 @@ dist/
 config.json
 web-config.json
 local-config.json
+tunnel-config.json
 relay/relay-config.json
 relay-config.json
 *.local.json
@@ -21,8 +22,10 @@ relay-config.json
 
 # 런타임 로그 및 임시·OS 파일
 logs/
+tools/
 *.log
 *.log.old
 relay/wol_relay.txt
+relay/tunnel-url.txt
 .DS_Store
 Thumbs.db

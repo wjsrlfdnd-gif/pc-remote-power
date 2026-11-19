@@ -2,15 +2,22 @@
 """
 집 안 상시 구동 기기(안드로이드 공기계 Termux / 라즈베리파이 / 리눅스 / 미니PC)에서 실행하는
 통합 PC 원격 전원 ON/OFF + PWA 앱 중계 서버입니다. (외부 패키지 설치 불필요 - Python 3 표준 라이브러리만 사용)
+VPN이나 공유기 포트포워딩 없이 Cloudflare Tunnel(cloudflared)을 내장 실행하여 자동 HTTPS 원격 접속을 지원합니다.
 """
 
 from __future__ import annotations
 
+import argparse
 import hmac
 import http.server
+import ipaddress
 import json
+import os
+import re
 import secrets
+import shutil
 import socket
+import subprocess
 import threading
 import time
 import urllib.error
@@ -21,6 +28,9 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 ROOT_DIR = BASE_DIR.parent
 CONFIG_PATH = BASE_DIR / "relay-config.json"
+TUNNEL_URL_PATH = BASE_DIR / "tunnel-url.txt"
+DEFAULT_PWA_BASE_URL = "https://wjsrlfdnd-gif.github.io/pc-remote-power/"
+TRYCLOUDFLARE_RE = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com", re.IGNORECASE)
 
 
 def detect_default_broadcast() -> str:
@@ -43,37 +53,99 @@ def load_icon_bytes(file_name: str) -> bytes | None:
     return None
 
 
-def ensure_config() -> dict:
+def find_cloudflared_binary() -> str | None:
+    found = shutil.which("cloudflared")
+    if found:
+        return found
+    candidates = [
+        Path.home() / ".local" / "bin" / "cloudflared",
+        Path("/usr/local/bin/cloudflared"),
+        Path("/usr/bin/cloudflared"),
+        ROOT_DIR / "tools" / "cloudflared.exe",
+        Path(r"C:\Program Files (x86)\cloudflared\cloudflared.exe"),
+        Path(r"C:\Program Files\cloudflared\cloudflared.exe"),
+    ]
+    for path in candidates:
+        if path.is_file():
+            return str(path)
+    return None
+
+
+def build_pwa_setup_link(public_url: str, pc_name: str, pwa_base_url: str = DEFAULT_PWA_BASE_URL) -> str:
+    base = (pwa_base_url or DEFAULT_PWA_BASE_URL).strip()
+    if not base:
+        base = DEFAULT_PWA_BASE_URL
+    params = {"server": public_url.rstrip("/"), "mode": "relay"}
+    if pc_name:
+        params["name"] = pc_name
+    sep = "&" if "?" in base else "?"
+    return f"{base}{sep}{urllib.parse.urlencode(params)}"
+
+
+def ensure_config(force_setup: bool = False) -> dict:
+    existing: dict = {}
     if CONFIG_PATH.exists():
         with CONFIG_PATH.open("r", encoding="utf-8") as f:
-            return json.load(f)
+            existing = json.load(f)
+        if not force_setup:
+            return existing
 
-    print("=" * 56)
-    print("  PC 원격 전원 중계기(WoL + OFF) 초기 설정")
-    print("=" * 56)
+    print("=" * 60)
+    print("  PC 원격 전원 중계기(WoL + OFF + VPN 없는 Cloudflare 터널) 설정")
+    print("=" * 60)
 
-    default_broadcast = detect_default_broadcast()
-    pc_name = input("PC 표시 이름 [기본값: My-PC]: ").strip() or "My-PC"
-    pc_mac = input("대상 PC 유선 랜 MAC 주소 (예: AA-BB-CC-DD-EE-FF): ").strip()
+    default_broadcast = existing.get("broadcast_ip") or detect_default_broadcast()
+    default_pc_name = existing.get("pc_name") or "My-PC"
+    default_pc_mac = existing.get("pc_mac") or ""
+    default_pc_ip = existing.get("pc_ip") or ""
+    default_pc_port = str(existing.get("pc_web_port") or 18080)
+    default_pc_token = existing.get("pc_web_token") or ""
+    default_relay_port = str(existing.get("relay_port") or 18090)
+
+    pc_name = input(f"PC 표시 이름 [기본값: {default_pc_name}]: ").strip() or default_pc_name
+    pc_mac = input(f"대상 PC 유선 랜 MAC 주소 (예: AA-BB-CC-DD-EE-FF){f' [현재: {default_pc_mac}]' if default_pc_mac else ''}: ").strip() or default_pc_mac
     while not pc_mac:
         pc_mac = input("대상 PC MAC 주소는 필수입니다: ").strip()
 
-    pc_ip = input("대상 PC 내부 IP (예: 192.168.0.10): ").strip()
+    pc_ip = input(f"대상 PC 내부 IP (예: 192.168.0.10){f' [현재: {default_pc_ip}]' if default_pc_ip else ''}: ").strip() or default_pc_ip
     while not pc_ip:
         pc_ip = input("대상 PC 내부 IP는 필수입니다: ").strip()
 
-    pc_web_port_raw = input("대상 PC RemotePowerWeb 포트 [기본값: 18080]: ").strip() or "18080"
-    pc_web_token = input("대상 PC web-config.json의 ApiToken: ").strip()
+    pc_web_port_raw = input(f"대상 PC RemotePowerWeb 포트 [기본값: {default_pc_port}]: ").strip() or default_pc_port
+    pc_web_token = input(f"대상 PC web-config.json의 ApiToken{' [엔터 시 기존 유지]' if default_pc_token else ''}: ").strip() or default_pc_token
     while not pc_web_token:
         pc_web_token = input("대상 PC ApiToken은 필수입니다: ").strip()
 
     broadcast_ip = input(f"공유기 브로드캐스트 IP [기본값: {default_broadcast}]: ").strip() or default_broadcast
-    relay_port_raw = input("이 중계 서버가 사용할 포트 [기본값: 18090]: ").strip() or "18090"
+    relay_port_raw = input(f"이 중계 서버가 사용할 포트 [기본값: {default_relay_port}]: ").strip() or default_relay_port
     relay_token = input("폰 접속용 중계기 토큰 [엔터 시 PC ApiToken과 동일, 'auto' 입력 시 랜덤 생성]: ").strip()
     if relay_token.lower() == "auto":
         relay_token = secrets.token_urlsafe(24)
     elif not relay_token:
-        relay_token = pc_web_token
+        relay_token = existing.get("relay_token") or pc_web_token
+
+    print("\n[외부 접속 방식 - VPN·포트포워딩 불필요]")
+    print("  1) quick : Cloudflare Quick Tunnel (계정·도메인 없이 즉시 무료 HTTPS 생성, 기본값)")
+    print("  2) token : Cloudflare Named Tunnel (무료 Cloudflare 계정 + 영구 고정 HTTPS 주소)")
+    print("  3) none  : 터널 미사용 (집 안 Wi-Fi 또는 직접 포트포워딩만 사용)")
+    tunnel_choice = input("선택 [1/2/3, 기본값: 1]: ").strip().lower()
+    if tunnel_choice in ("2", "token"):
+        tunnel_mode = "token"
+    elif tunnel_choice in ("3", "none"):
+        tunnel_mode = "none"
+    else:
+        tunnel_mode = "quick"
+
+    cloudflare_tunnel_token = ""
+    public_url = ""
+    notify_webhook_url = existing.get("notify_webhook_url", "")
+    if tunnel_mode == "token":
+        cloudflare_tunnel_token = input("Cloudflare Tunnel 토큰 (eyJh...): ").strip() or existing.get("cloudflare_tunnel_token", "")
+        public_url = input("연결한 고정 HTTPS 주소 (예: https://pc.example.com, 안내용/선택): ").strip().rstrip("/") or existing.get("public_url", "")
+    elif tunnel_mode == "quick":
+        print("  (선택) 재부팅 시 바뀌는 Quick Tunnel 새 주소를 폰으로 자동 알림 받으려면")
+        print("  Discord Webhook URL 또는 ntfy.sh 주소(예: https://ntfy.sh/나만의비밀토픽)를 입력하세요.")
+        notify_webhook_url = input(f"알림 웹훅 URL (미사용 시 엔터){f' [현재 설정됨]' if notify_webhook_url else ''}: ").strip() or notify_webhook_url
 
     duckdns_domain = input("DuckDNS 도메인 (선택, 미사용 시 엔터): ").strip()
     duckdns_token = input("DuckDNS 토큰 (선택, 미사용 시 엔터): ").strip() if duckdns_domain else ""
@@ -87,6 +159,11 @@ def ensure_config() -> dict:
         "broadcast_ip": broadcast_ip,
         "relay_port": int(relay_port_raw),
         "relay_token": relay_token,
+        "tunnel_mode": tunnel_mode,
+        "cloudflare_tunnel_token": cloudflare_tunnel_token,
+        "public_url": public_url,
+        "notify_webhook_url": notify_webhook_url,
+        "pwa_base_url": existing.get("pwa_base_url") or DEFAULT_PWA_BASE_URL,
         "duckdns_domain": duckdns_domain,
         "duckdns_token": duckdns_token,
     }
@@ -426,7 +503,224 @@ class AuthLimiter:
         return False, 401, "유효한 인증 토큰이 필요합니다."
 
 
-def make_handler(cfg: dict, limiter: AuthLimiter):
+def resolve_client_ip(peer_ip: str, headers) -> str:
+    try:
+        ip_obj = ipaddress.ip_address(peer_ip)
+        is_loopback = ip_obj.is_loopback
+    except ValueError:
+        is_loopback = peer_ip in ("127.0.0.1", "::1")
+
+    if is_loopback and headers is not None:
+        cf_ip = (headers.get("CF-Connecting-IP") or "").strip()
+        if cf_ip and len(cf_ip) <= 64:
+            return cf_ip
+        xff = (headers.get("X-Forwarded-For") or "").strip()
+        if xff:
+            first = xff.split(",")[0].strip()
+            if first and len(first) <= 64:
+                return first
+    return peer_ip
+
+
+def send_tunnel_url_notification(webhook_url: str, pc_name: str, public_url: str, pwa_link: str) -> None:
+    url = (webhook_url or "").strip()
+    if not url:
+        return
+    try:
+        lower = url.lower()
+        if "discord.com/api/webhooks/" in lower or "discordapp.com/api/webhooks/" in lower:
+            payload = json.dumps(
+                {
+                    "content": (
+                        f"⚡ **{pc_name} 원격 전원 중계기 연결 준비 완료 (VPN 불필요)**\n"
+                        f"• 서버 주소: `{public_url}`\n"
+                        f"• PWA 자동 설정 열기: {pwa_link}"
+                    )
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+            req = urllib.request.Request(
+                url,
+                data=payload,
+                method="POST",
+                headers={"Content-Type": "application/json", "User-Agent": "pc-remote-power-relay/1.0"},
+            )
+        else:
+            # ntfy.sh 또는 일반 텍스트 웹훅 (HTTP 헤더는 ASCII만 허용)
+            ascii_name = pc_name.encode("ascii", "ignore").decode("ascii").strip() or "PC"
+            body = (
+                f"{pc_name} 원격 전원 중계기가 시작되었습니다.\n"
+                f"서버 주소: {public_url}\n"
+                f"PWA 열기: {pwa_link}"
+            ).encode("utf-8")
+            req = urllib.request.Request(
+                url,
+                data=body,
+                method="POST",
+                headers={
+                    "Title": f"{ascii_name} Remote Power",
+                    "Click": pwa_link,
+                    "Content-Type": "text/plain; charset=utf-8",
+                },
+            )
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            print(f"[알림 전송 완료] HTTP {resp.status}")
+    except Exception as e:
+        print(f"[알림 전송 실패] {e}")
+
+
+class CloudflareTunnelManager:
+    def __init__(self, cfg: dict, relay_port: int):
+        self.cfg = cfg
+        self.relay_port = relay_port
+        self.mode = (cfg.get("tunnel_mode") or "none").strip().lower()
+        self.token = (cfg.get("cloudflare_tunnel_token") or "").strip()
+        self.public_url = (cfg.get("public_url") or "").strip().rstrip("/")
+        self._stop = threading.Event()
+        self._proc: subprocess.Popen[str] | None = None
+        self._lock = threading.Lock()
+        self._thread: threading.Thread | None = None
+        self.running = False
+        self.last_error = ""
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            return {
+                "tunnelMode": self.mode,
+                "tunnelRunning": self.running,
+                "publicUrl": self.public_url,
+                "error": self.last_error,
+            }
+
+    def start(self) -> None:
+        if self.mode not in ("quick", "token"):
+            return
+        if self.mode == "token" and not self.token:
+            self.last_error = "cloudflare_tunnel_token이 비어 있어 Named Tunnel을 시작하지 않았습니다."
+            print(f"[Cloudflare Tunnel 경고] {self.last_error}")
+            return
+
+        binary = find_cloudflared_binary()
+        if not binary:
+            self.last_error = "cloudflared가 설치되어 있지 않습니다."
+            print("[Cloudflare Tunnel 안내] cloudflared를 찾지 못했습니다. 로컬 HTTP 서버만 실행합니다.")
+            print("  - Termux(공기계): pkg update -y && pkg install -y cloudflared")
+            print("  - 라즈베리파이/리눅스: bash relay/setup_relay_cloudflare.sh")
+            print("  - Windows: winget install -e --id Cloudflare.cloudflared")
+            return
+
+        self._thread = threading.Thread(target=self._run_loop, args=(binary,), daemon=True)
+        self._thread.start()
+
+    def _run_loop(self, binary: str) -> None:
+        while not self._stop.is_set():
+            if self.mode == "token":
+                cmd = [binary, "tunnel", "--no-autoupdate", "run", "--token", self.token]
+            else:
+                cmd = [binary, "tunnel", "--no-autoupdate", "--url", f"http://127.0.0.1:{self.relay_port}"]
+
+            try:
+                proc = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    bufsize=1,
+                )
+            except Exception as e:
+                with self._lock:
+                    self.running = False
+                    self.last_error = str(e)
+                print(f"[Cloudflare Tunnel 시작 실패] {e}")
+                self._stop.wait(10)
+                continue
+
+            with self._lock:
+                self._proc = proc
+                self.running = True
+                self.last_error = ""
+
+            if self.mode == "token":
+                print("[Cloudflare Tunnel] Named Tunnel 실행 중 (VPN·포트포워딩 불필요)")
+                if self.public_url:
+                    self._announce_url(self.public_url)
+            else:
+                print("[Cloudflare Tunnel] Quick Tunnel 무료 HTTPS 주소 발급 중...")
+
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                if self._stop.is_set():
+                    break
+                text = line.strip()
+                if not text:
+                    continue
+                if self.mode == "quick":
+                    match = TRYCLOUDFLARE_RE.search(text)
+                    if match:
+                        found_url = match.group(0).rstrip("/")
+                        changed = False
+                        with self._lock:
+                            if found_url != self.public_url:
+                                self.public_url = found_url
+                                changed = True
+                        if changed:
+                            self._announce_url(found_url)
+                if "ERR " in text or "failed to" in text.lower():
+                    print(f"[cloudflared] {text}")
+
+            rc = proc.wait()
+            with self._lock:
+                self._proc = None
+                self.running = False
+
+            if not self._stop.is_set():
+                print(f"[Cloudflare Tunnel] 프로세스 종료(코드 {rc}) — 5초 후 자동 재연결합니다...")
+                self._stop.wait(5)
+
+    def _announce_url(self, url: str) -> None:
+        pc_name = self.cfg.get("pc_name", "My-PC")
+        pwa_link = build_pwa_setup_link(url, pc_name, self.cfg.get("pwa_base_url", DEFAULT_PWA_BASE_URL))
+        try:
+            TUNNEL_URL_PATH.write_text(f"{url}\n{pwa_link}\n", encoding="utf-8")
+        except Exception:
+            pass
+
+        print("")
+        print("=" * 64)
+        print("  🌐 VPN 없이 외부 접속 가능! (Cloudflare Tunnel HTTPS 활성)")
+        print(f"  • 서버 주소       : {url}")
+        print(f"  • PWA 자동 설정   : {pwa_link}")
+        print("    (위 링크를 폰 브라우저에서 열면 서버 주소가 자동 입력됩니다. 토큰만 1회 입력!)")
+        print(f"  • 중계기 직접 접속: {url}/?token={self.cfg['relay_token']}")
+        print("=" * 64)
+        print("")
+
+        webhook = (self.cfg.get("notify_webhook_url") or "").strip()
+        if webhook:
+            threading.Thread(
+                target=send_tunnel_url_notification,
+                args=(webhook, pc_name, url, pwa_link),
+                daemon=True,
+            ).start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        with self._lock:
+            proc = self._proc
+        if proc and proc.poll() is None:
+            try:
+                proc.terminate()
+                proc.wait(timeout=4)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+
+
+def make_handler(cfg: dict, limiter: AuthLimiter, tunnel_manager: CloudflareTunnelManager | None = None):
     html_bytes = build_html(cfg).encode("utf-8")
     sw_bytes = SERVICE_WORKER_JS.encode("utf-8")
     icon_192 = load_icon_bytes("icon-192.png")
@@ -457,8 +751,11 @@ def make_handler(cfg: dict, limiter: AuthLimiter):
     ).encode("utf-8")
 
     class Handler(http.server.BaseHTTPRequestHandler):
+        def _client_ip(self) -> str:
+            return resolve_client_ip(self.client_address[0], self.headers)
+
         def log_message(self, format: str, *args) -> None:
-            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {self.client_address[0]} - {format % args}")
+            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {self._client_ip()} - {format % args}")
 
         def _extract_token(self) -> str | None:
             hdr = self.headers.get("X-Auth-Token")
@@ -508,7 +805,7 @@ def make_handler(cfg: dict, limiter: AuthLimiter):
             self._send_bytes(code, "application/json; charset=utf-8", json.dumps(obj, ensure_ascii=False).encode("utf-8"))
 
         def _require_auth(self) -> bool:
-            ok, code, msg = limiter.check(self.client_address[0], self._extract_token())
+            ok, code, msg = limiter.check(self._client_ip(), self._extract_token())
             if not ok:
                 self._send_json(code, {"success": False, "message": msg})
                 return False
@@ -539,9 +836,10 @@ def make_handler(cfg: dict, limiter: AuthLimiter):
             elif route == "/api/pc/status":
                 if not self._require_auth():
                     return
+                relay_meta = tunnel_manager.snapshot() if tunnel_manager else {"tunnelMode": cfg.get("tunnel_mode", "none")}
                 code, data = call_pc_web(cfg, "GET", "/api/status", timeout=2.5)
                 if code == 200:
-                    self._send_json(200, {"success": True, "online": True, "pc": data})
+                    self._send_json(200, {"success": True, "online": True, "pc": data, "relay": relay_meta})
                 elif code in (401, 429):
                     self._send_json(
                         502,
@@ -549,11 +847,12 @@ def make_handler(cfg: dict, limiter: AuthLimiter):
                             "success": False,
                             "online": False,
                             "authError": True,
+                            "relay": relay_meta,
                             "message": f"중계기 ↔ PC 인증 오류(HTTP {code}): relay-config.json의 pc_web_token과 PC의 web-config.json ApiToken이 일치하는지 확인하세요.",
                         },
                     )
                 else:
-                    self._send_json(200, {"success": True, "online": False, "pc": None})
+                    self._send_json(200, {"success": True, "online": False, "pc": None, "relay": relay_meta})
             else:
                 self._send_json(404, {"success": False, "message": "Not Found"})
 
@@ -601,18 +900,41 @@ def duckdns_loop(cfg: dict) -> None:
         time.sleep(300)
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="PC 원격 전원 중계기 (WoL + OFF + VPN 없는 Cloudflare Tunnel)")
+    parser.add_argument("--setup", "--reconfigure", dest="setup", action="store_true", help="relay-config.json 설정 마법사를 다시 실행")
+    parser.add_argument("--setup-only", dest="setup_only", action="store_true", help="relay-config.json만 생성/수정하고 종료")
+    parser.add_argument("--tunnel", choices=("quick", "token", "none"), default=None, help="실행 시 Cloudflare Tunnel 모드 덮어쓰기")
+    parser.add_argument("--no-tunnel", action="store_true", help="Cloudflare Tunnel을 실행하지 않고 로컬 HTTP만 구동")
+    return parser.parse_args()
+
+
 def main() -> None:
-    cfg = ensure_config()
+    args = parse_args()
+    cfg = ensure_config(force_setup=(args.setup or args.setup_only))
+    if args.setup_only:
+        return
+    if args.no_tunnel:
+        cfg = dict(cfg)
+        cfg["tunnel_mode"] = "none"
+    elif args.tunnel:
+        cfg = dict(cfg)
+        cfg["tunnel_mode"] = args.tunnel
+
     if cfg.get("duckdns_domain") and cfg.get("duckdns_token"):
         threading.Thread(target=duckdns_loop, args=(cfg,), daemon=True).start()
 
     port = int(cfg.get("relay_port", 18090))
-    server = http.server.ThreadingHTTPServer(("0.0.0.0", port), make_handler(cfg, AuthLimiter(cfg["relay_token"])))
+    tunnel = CloudflareTunnelManager(cfg, port)
+    server = http.server.ThreadingHTTPServer(("0.0.0.0", port), make_handler(cfg, AuthLimiter(cfg["relay_token"]), tunnel))
     print(f"통합 원격 전원 중계기 실행 중: http://0.0.0.0:{port}/?token={cfg['relay_token']}")
+    tunnel.start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print("\n중계 서버를 종료합니다.")
+    finally:
+        tunnel.stop()
         server.server_close()
 
 
