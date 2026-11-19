@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pc-remote-power-v3';
+const CACHE_NAME = 'pc-remote-power-v4';
 const APP_SHELL_ASSETS = [
   './',
   './index.html',

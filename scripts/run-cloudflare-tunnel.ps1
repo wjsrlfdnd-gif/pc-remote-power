@@ -67,10 +67,53 @@ function Send-TunnelWebhook {
     }
 }
 
+function Get-SyncTopic {
+    param([string]$ApiToken)
+    if ([string]::IsNullOrWhiteSpace($ApiToken)) { return "" }
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes("pcrp-sync:" + $ApiToken.Trim())
+        $hash = $sha.ComputeHash($bytes)
+        $hex = ([System.BitConverter]::ToString($hash) -replace '-', '').ToLowerInvariant()
+        return "pcrp-" + $hex.Substring(0, 24)
+    }
+    finally {
+        $sha.Dispose()
+    }
+}
+
+function Publish-SyncUrl {
+    param([string]$SyncTopic, [string]$PublicUrl, [string]$PcName)
+    if ([string]::IsNullOrWhiteSpace($SyncTopic) -or [string]::IsNullOrWhiteSpace($PublicUrl)) { return }
+    try {
+        $payload = @{
+            serverUrl = $PublicUrl
+            pcName = $PcName
+            mode = "direct"
+            ts = [int]([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())
+        } | ConvertTo-Json -Compress
+        Invoke-RestMethod -Uri "https://ntfy.sh/$SyncTopic" -Method Post -ContentType "text/plain; charset=utf-8" -Body ([System.Text.Encoding]::UTF8.GetBytes($payload)) -TimeoutSec 8 | Out-Null
+        Write-TunnelLog "[주소 자동 동기화 완료] $SyncTopic -> $PublicUrl"
+    }
+    catch {
+        Write-TunnelLog "[주소 자동 동기화 실패] $($_.Exception.Message)"
+    }
+}
+
 if (-not (Test-Path $configPath)) {
     Write-TunnelLog "[오류] tunnel-config.json을 찾을 수 없습니다: $configPath"
     exit 1
 }
+
+$webConfigPath = Join-Path $projectRoot "web-config.json"
+$apiToken = ""
+if (Test-Path $webConfigPath) {
+    try {
+        $wcfg = Get-Content -Path $webConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($wcfg.ApiToken) { $apiToken = $wcfg.ApiToken.ToString().Trim() }
+    } catch {}
+}
+$syncTopic = Get-SyncTopic -ApiToken $apiToken
 
 $cfg = Get-Content -Path $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $mode = if ($cfg.TunnelMode) { $cfg.TunnelMode.ToString().Trim().ToLowerInvariant() } else { "quick" }
@@ -129,8 +172,12 @@ while (-not $proc.HasExited) {
         if ($found -ne $lastUrl) {
             $lastUrl = $found
             $pwaLink = "${pwaBaseUrl}?server=$([Uri]::EscapeDataString($found))&mode=direct&name=$([Uri]::EscapeDataString($pcName))"
+            if (-not [string]::IsNullOrWhiteSpace($syncTopic)) {
+                $pwaLink = "$pwaLink&sync=$([Uri]::EscapeDataString($syncTopic))"
+            }
             [System.IO.File]::WriteAllText($urlFilePath, "$found`r`n$pwaLink`r`n", (New-Object System.Text.UTF8Encoding($false)))
             Write-TunnelLog "[Quick Tunnel 준비 완료] $found"
+            Publish-SyncUrl -SyncTopic $syncTopic -PublicUrl $found -PcName $pcName
             Send-TunnelWebhook -WebhookUrl $webhookUrl -PcName $pcName -PublicUrl $found -PwaLink $pwaLink
         }
     }

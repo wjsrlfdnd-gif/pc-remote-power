@@ -740,7 +740,8 @@
         mode: 'pc_remote_mode',
         token: 'pc_remote_token',
         pcName: 'pc_remote_pc_name',
-        oneClick: 'pc_remote_oneclick'
+        oneClick: 'pc_remote_oneclick',
+        syncTopic: 'pc_remote_sync_topic'
       };
 
       const ENDPOINTS = {
@@ -772,6 +773,7 @@
         token: '',
         pcName: '',
         oneClick: false,
+        syncTopic: '',
         deferredPrompt: null,
         pendingAction: null
       };
@@ -785,6 +787,73 @@
           return parsed.origin + parsed.pathname.replace(/\/+$/, '');
         } catch {
           return '';
+        }
+      }
+
+      async function deriveSyncTopic() {
+        if (state.syncTopic && state.syncTopic.trim()) return state.syncTopic.trim();
+        const clean = (state.token || '').trim();
+        if (!clean || !window.crypto || !window.crypto.subtle) return '';
+        try {
+          const bytes = new TextEncoder().encode('pcrp-sync:' + clean);
+          const hashBuf = await window.crypto.subtle.digest('SHA-256', bytes);
+          const hex = Array.from(new Uint8Array(hashBuf))
+            .map((b) => b.toString(16).padStart(2, '0'))
+            .join('');
+          return 'pcrp-' + hex.slice(0, 24);
+        } catch {
+          return '';
+        }
+      }
+
+      async function syncServerUrlFromTopic() {
+        const topic = await deriveSyncTopic();
+        if (!topic) return false;
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 5000);
+        try {
+          const res = await fetch(`https://ntfy.sh/${encodeURIComponent(topic)}/json?poll=1`, {
+            method: 'GET',
+            cache: 'no-store',
+            signal: controller.signal
+          });
+          if (!res.ok) return false;
+          const text = await res.text();
+          let latestUrl = '';
+          for (const line of text.split('\n')) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            try {
+              const evt = JSON.parse(trimmed);
+              if (evt && evt.event === 'message' && typeof evt.message === 'string') {
+                try {
+                  const inner = JSON.parse(evt.message);
+                  const candidate = sanitizeUrl(inner.serverUrl);
+                  if (candidate) latestUrl = candidate;
+                } catch {
+                  const m = evt.message.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/i);
+                  if (m) latestUrl = sanitizeUrl(m[0]);
+                }
+              }
+            } catch {}
+          }
+          if (!latestUrl) {
+            const matches = text.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/gi);
+            if (matches && matches.length > 0) {
+              latestUrl = sanitizeUrl(matches[matches.length - 1]);
+            }
+          }
+          if (latestUrl && latestUrl !== state.serverUrl) {
+            state.serverUrl = latestUrl;
+            localStorage.setItem(STORAGE_KEYS.serverUrl, latestUrl);
+            syncFormAndUi();
+            return true;
+          }
+          return false;
+        } catch {
+          return false;
+        } finally {
+          clearTimeout(timer);
         }
       }
 
@@ -812,6 +881,11 @@
           localStorage.setItem(STORAGE_KEYS.pcName, qName.trim().slice(0, 40));
           imported = true;
         }
+        const qSync = params.get('sync');
+        if (qSync !== null && qSync.trim()) {
+          localStorage.setItem(STORAGE_KEYS.syncTopic, qSync.trim().slice(0, 64));
+          imported = true;
+        }
 
         if (imported && window.history && window.history.replaceState) {
           window.history.replaceState({}, '', window.location.pathname);
@@ -823,6 +897,7 @@
         state.token = localStorage.getItem(STORAGE_KEYS.token) || '';
         state.pcName = localStorage.getItem(STORAGE_KEYS.pcName) || '';
         state.oneClick = localStorage.getItem(STORAGE_KEYS.oneClick) === 'true';
+        state.syncTopic = localStorage.getItem(STORAGE_KEYS.syncTopic) || '';
         return imported;
       }
 
@@ -882,7 +957,10 @@
 
       let postActionRefreshTimer = null;
 
-      async function apiFetch(endpoint) {
+      async function apiFetch(endpoint, allowSyncRetry = true) {
+        if (!state.serverUrl && (state.token || state.syncTopic)) {
+          await syncServerUrlFromTopic();
+        }
         if (!state.serverUrl) {
           throw new Error('먼저 ⚙️ 서버 설정에서 백엔드 서버 주소를 입력하세요.');
         }
@@ -907,10 +985,24 @@
           });
           const data = await response.json().catch(() => ({}));
           if (!response.ok || data.success === false) {
+            if (allowSyncRetry && response.status !== 401 && response.status !== 429) {
+              clearTimeout(timer);
+              const synced = await syncServerUrlFromTopic();
+              if (synced) {
+                return await apiFetch(endpoint, false);
+              }
+            }
             throw new Error(data.message || data.error || `HTTP ${response.status} 오류`);
           }
           return data;
         } catch (err) {
+          if (allowSyncRetry && !/HTTP (401|429)/.test(err.message || '') && !/인증|차단/.test(err.message || '')) {
+            clearTimeout(timer);
+            const synced = await syncServerUrlFromTopic();
+            if (synced) {
+              return await apiFetch(endpoint, false);
+            }
+          }
           if (err.name === 'AbortError') {
             throw new Error(`요청 시간 초과(${Math.round(timeoutMs / 1000)}초) — 서버/네트워크 상태를 확인하세요.`);
           }
@@ -925,7 +1017,7 @@
 
       async function refreshStatus(options) {
         const silent = Boolean(options && options.silent === true);
-        if (!state.serverUrl) {
+        if (!state.serverUrl && !state.token && !state.syncTopic) {
           setStatusBadge('idle', '설정 대기 중');
           el('metricUptime').textContent = '-';
           el('metricAgStatus').textContent = '-';
@@ -992,9 +1084,9 @@
       function requestAction(actionKey) {
         const ep = ENDPOINTS[state.mode][actionKey];
         if (!ep) return;
-        if (!state.serverUrl) {
+        if (!state.serverUrl && !state.token && !state.syncTopic) {
           toggleConfig(true);
-          setResultMessage('⚠️ 먼저 서버 주소와 인증 토큰을 저장하세요.', true);
+          setResultMessage('⚠️ 먼저 서버 주소 또는 인증 토큰을 저장하세요.', true);
           return;
         }
         if (ep.confirm && !state.oneClick) {
@@ -1040,13 +1132,14 @@
 
         el('btnSaveConfig').addEventListener('click', () => {
           const url = sanitizeUrl(el('inputServerUrl').value);
-          if (!url) {
-            setResultMessage('❌ 올바른 http:// 또는 https:// 서버 주소를 입력하세요.', true);
+          const tok = el('inputToken').value.trim();
+          if (!url && !tok) {
+            setResultMessage('❌ 올바른 서버 주소 또는 인증 토큰을 입력하세요.', true);
             return;
           }
           state.serverUrl = url;
           state.mode = el('inputMode').value === 'direct' ? 'direct' : 'relay';
-          state.token = el('inputToken').value.trim();
+          state.token = tok;
           state.pcName = el('inputPcName').value.trim().slice(0, 40);
 
           localStorage.setItem(STORAGE_KEYS.serverUrl, state.serverUrl);
@@ -1066,6 +1159,7 @@
           state.token = '';
           state.pcName = '';
           state.oneClick = false;
+          state.syncTopic = '';
           syncFormAndUi();
           refreshStatus();
           setResultMessage('ℹ️ 저장된 서버 연결 정보를 모두 초기화했습니다.');

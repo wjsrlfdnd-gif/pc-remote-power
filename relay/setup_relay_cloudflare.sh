@@ -171,6 +171,13 @@ if [ "$ACTION" = "systemd" ]; then
   exit 0
 fi
 
+if is_termux; then
+  install_termux_boot || true
+fi
+
+pkill -f wol_relay.py 2>/dev/null || true
+sleep 1
+
 echo "=== VPN 없는 PC 원격 전원 중계기(Cloudflare Tunnel) 시작 ==="
 if [ "${#PASS_ARGS[@]}" -gt 0 ]; then
   exec "$PYTHON_BIN" "$RELAY_SCRIPT" "${PASS_ARGS[@]}"
