@@ -45,13 +45,13 @@ if (-not (Test-Path $exePath)) {
 }
 
 if (-not (Test-Path $configPath)) {
-    Write-Host "[오류] config.json 파일이 없습니다. 먼저 '2_디스코드_봇_설정.bat'을 실행해 주세요." -ForegroundColor Red
+    Write-Host "[오류] config.json 파일이 없습니다. 먼저 'optional_디스코드_봇_설정.bat'을 실행해 주세요." -ForegroundColor Red
     exit 1
 }
 
 & $exePath --test-config
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "[오류] config.json 검증에 실패했습니다. 먼저 '2_디스코드_봇_설정.bat'을 완료해 주세요." -ForegroundColor Red
+    Write-Host "[오류] config.json 검증에 실패했습니다. 먼저 'optional_디스코드_봇_설정.bat'을 완료해 주세요." -ForegroundColor Red
     exit 1
 }
 
