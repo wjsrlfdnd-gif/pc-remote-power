@@ -36,5 +36,5 @@ python3 wol_relay.py
 ## 3. 외부 접속 & 모바일 PWA "앱 설치"
 - **외부 연결(택 1)**:
   - **공유기 포트포워딩**: `TCP 18090` → `(상시 기기 내부 IP):18090`
-  - **Tailscale(권장)**: 상시 기기와 메인 폰에 Tailscale 설치 + `tailscale serve 18090` 실행 시 자동 **HTTPS 주소**가 발급되어 Android Chrome에서도 **정식 PWA "홈 화면에 앱 설치"** 버튼이 바로 동작합니다.
+  - **Tailscale(권장)**: 상시 기기와 메인 폰에 Tailscale 설치 + `tailscale serve --bg 18090` 실행 시 백그라운드 상시 **HTTPS 주소**(`tailscale serve status`로 확인)가 발급되어 Android Chrome에서도 **정식 PWA "홈 화면에 앱 설치"** 버튼이 바로 동작합니다.
 - **iOS Safari**: `공유 → 홈 화면에 추가`로 정식 아이콘 앱처럼 추가됩니다.

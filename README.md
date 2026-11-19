@@ -44,9 +44,10 @@
 
 ### ⚠️ GitHub Pages(`https://`)에서 백엔드 연결 시 참고
 - `https://` 페이지에서는 일반 `http://` 사설 IP 요청이 브라우저 Mixed Content 정책으로 차단됩니다.
-- PC 또는 공기계에서 **`tailscale serve`** 를 실행하면 별도 도메인 없이 안전한 `https://...ts.net` 주소를 바로 연결할 수 있습니다:
+- PC 또는 공기계에서 **`tailscale serve --bg`** 를 실행하면 별도 도메인 없이 안전한 `https://...ts.net` 주소를 백그라운드에서 상시 연결할 수 있습니다:
   ```bash
-  tailscale serve 18080   # PC RemotePowerWeb 직접 연결 시
-  # 또는 공기계 중계기 사용 시: tailscale serve 18090
+  tailscale serve --bg 18080   # PC RemotePowerWeb 직접 연결 시
+  # 또는 공기계 중계기 사용 시: tailscale serve --bg 18090
+  # 생성된 HTTPS 주소 확인: tailscale serve status
   ```
-- 백엔드(`RemotePowerWeb`, `wol_relay.py`)에는 이미 `CORS` 허용 및 `OPTIONS` 프리플라이트 응답이 내장되어 있습니다.
+- 백엔드(`RemotePowerWeb`, `wol_relay.py`)에는 이미 `CORS`, `Private Network Access(PNA)` 허용 및 `OPTIONS` 프리플라이트 응답이 내장되어 있습니다.

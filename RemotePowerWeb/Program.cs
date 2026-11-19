@@ -61,12 +61,13 @@ public static class Program
 
         var app = builder.Build();
 
-        // GitHub Pages 등 외부 HTTPS PWA에서 API를 호출할 수 있도록 CORS 및 OPTIONS 프리플라이트 허용
+        // GitHub Pages 등 외부 HTTPS PWA에서 사설망/Tailscale 백엔드 API를 호출할 수 있도록 CORS, PNA 및 OPTIONS 프리플라이트 허용
         app.Use(async (context, next) =>
         {
             context.Response.Headers["Access-Control-Allow-Origin"] = "*";
             context.Response.Headers["Access-Control-Allow-Headers"] = "Content-Type, X-Auth-Token, Authorization";
             context.Response.Headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS";
+            context.Response.Headers["Access-Control-Allow-Private-Network"] = "true";
             context.Response.Headers["Access-Control-Max-Age"] = "86400";
 
             if (HttpMethods.IsOptions(context.Request.Method))

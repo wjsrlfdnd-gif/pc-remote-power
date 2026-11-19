@@ -358,6 +358,11 @@ def build_html(cfg: dict) -> str:
         const r = await fetch('/api/pc/status', {{ headers: {{ 'X-Auth-Token': token }} }});
         if (r.status === 401 || r.status === 429) {{ toggleTokenPanel(true); b.textContent = '인증 실패'; b.className = 'badge off'; return; }}
         const d = await r.json();
+        if (!r.ok || d.success === false) {{
+          b.textContent = d.authError ? '⚠️ PC 인증 오류' : '⚠️ 백엔드 오류'; b.className = 'badge off';
+          m.textContent = d.message || 'PC 백엔드 상태 조회에 실패했습니다.';
+          return;
+        }}
         if (d.online) {{
           b.textContent = '🟢 PC 켜짐'; b.className = 'badge';
           const agy = d.pc?.antigravityRunning
@@ -471,7 +476,19 @@ def make_handler(cfg: dict, limiter: AuthLimiter):
             self.send_header("Access-Control-Allow-Origin", "*")
             self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Auth-Token, Authorization")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Private-Network", "true")
             self.send_header("Access-Control-Max-Age", "86400")
+
+        def _drain_body(self) -> None:
+            raw_len = self.headers.get("Content-Length")
+            if not raw_len:
+                return
+            try:
+                length = int(raw_len)
+            except ValueError:
+                return
+            if length > 0:
+                self.rfile.read(min(length, 65536))
 
         def _send_bytes(self, code: int, content_type: str, data: bytes) -> None:
             self.send_response(code)
@@ -522,15 +539,26 @@ def make_handler(cfg: dict, limiter: AuthLimiter):
             elif route == "/api/pc/status":
                 if not self._require_auth():
                     return
-                code, data = call_pc_web(cfg, "GET", "/api/status", timeout=1.5)
+                code, data = call_pc_web(cfg, "GET", "/api/status", timeout=2.5)
                 if code == 200:
                     self._send_json(200, {"success": True, "online": True, "pc": data})
+                elif code in (401, 429):
+                    self._send_json(
+                        502,
+                        {
+                            "success": False,
+                            "online": False,
+                            "authError": True,
+                            "message": f"중계기 ↔ PC 인증 오류(HTTP {code}): relay-config.json의 pc_web_token과 PC의 web-config.json ApiToken이 일치하는지 확인하세요.",
+                        },
+                    )
                 else:
                     self._send_json(200, {"success": True, "online": False, "pc": None})
             else:
                 self._send_json(404, {"success": False, "message": "Not Found"})
 
         def do_POST(self) -> None:
+            self._drain_body()
             route = urllib.parse.urlparse(self.path).path
             if not route.startswith("/api/pc/"):
                 self._send_json(404, {"success": False, "message": "Not Found"})
@@ -546,7 +574,7 @@ def make_handler(cfg: dict, limiter: AuthLimiter):
                 except Exception as e:
                     self._send_json(500, {"success": False, "message": f"WoL 전송 실패: {e}"})
             elif action == "antigravity/start":
-                code, data = call_pc_web(cfg, "POST", "/api/app/antigravity/start", timeout=8.0)
+                code, data = call_pc_web(cfg, "POST", "/api/app/antigravity/start", timeout=15.0)
                 self._send_json(code, data)
             elif action in ("off", "shutdown", "sleep", "reboot", "cancel"):
                 target_action = "shutdown" if action == "off" else action

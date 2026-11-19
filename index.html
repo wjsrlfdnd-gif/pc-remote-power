@@ -746,21 +746,21 @@
       const ENDPOINTS = {
         relay: {
           status: { method: 'GET', path: '/api/pc/status' },
-          on: { method: 'POST', path: '/api/pc/on', label: 'PC 켜기 (WoL)' },
-          antigravity: { method: 'POST', path: '/api/pc/antigravity/start', label: 'Antigravity 실행' },
-          sleep: { method: 'POST', path: '/api/pc/sleep', label: '절전 모드', confirm: true },
-          reboot: { method: 'POST', path: '/api/pc/reboot', label: 'PC 재부팅', confirm: true },
-          off: { method: 'POST', path: '/api/pc/off', label: 'PC 종료', confirm: true },
-          cancel: { method: 'POST', path: '/api/pc/cancel', label: '예약 취소' }
+          on: { method: 'POST', path: '/api/pc/on', label: 'PC 켜기 (WoL)', refreshDelayMs: 5000 },
+          antigravity: { method: 'POST', path: '/api/pc/antigravity/start', label: 'Antigravity 실행', timeoutMs: 15000, refreshDelayMs: 2500 },
+          sleep: { method: 'POST', path: '/api/pc/sleep', label: '절전 모드', confirm: true, refreshDelayMs: 3000 },
+          reboot: { method: 'POST', path: '/api/pc/reboot', label: 'PC 재부팅', confirm: true, refreshDelayMs: 6500 },
+          off: { method: 'POST', path: '/api/pc/off', label: 'PC 종료', confirm: true, refreshDelayMs: 6500 },
+          cancel: { method: 'POST', path: '/api/pc/cancel', label: '예약 취소', refreshDelayMs: 1000 }
         },
         direct: {
           status: { method: 'GET', path: '/api/status' },
           on: null,
-          antigravity: { method: 'POST', path: '/api/app/antigravity/start', label: 'Antigravity 실행' },
-          sleep: { method: 'POST', path: '/api/power/sleep', label: '절전 모드', confirm: true },
-          reboot: { method: 'POST', path: '/api/power/reboot', label: 'PC 재부팅', confirm: true },
-          off: { method: 'POST', path: '/api/power/shutdown', label: 'PC 종료', confirm: true },
-          cancel: { method: 'POST', path: '/api/power/cancel', label: '예약 취소' }
+          antigravity: { method: 'POST', path: '/api/app/antigravity/start', label: 'Antigravity 실행', timeoutMs: 15000, refreshDelayMs: 2500 },
+          sleep: { method: 'POST', path: '/api/power/sleep', label: '절전 모드', confirm: true, refreshDelayMs: 3000 },
+          reboot: { method: 'POST', path: '/api/power/reboot', label: 'PC 재부팅', confirm: true, refreshDelayMs: 6500 },
+          off: { method: 'POST', path: '/api/power/shutdown', label: 'PC 종료', confirm: true, refreshDelayMs: 6500 },
+          cancel: { method: 'POST', path: '/api/power/cancel', label: '예약 취소', refreshDelayMs: 1000 }
         }
       };
 
@@ -879,6 +879,8 @@
         btn.setAttribute('aria-expanded', String(open));
       }
 
+      let postActionRefreshTimer = null;
+
       async function apiFetch(endpoint) {
         if (!state.serverUrl) {
           throw new Error('먼저 ⚙️ 서버 설정에서 백엔드 서버 주소를 입력하세요.');
@@ -892,8 +894,9 @@
           headers['Content-Type'] = 'application/json';
         }
 
+        const timeoutMs = endpoint.timeoutMs || 8000;
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 8000);
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
         try {
           const response = await fetch(`${state.serverUrl}${endpoint.path}`, {
             method: endpoint.method,
@@ -908,10 +911,10 @@
           return data;
         } catch (err) {
           if (err.name === 'AbortError') {
-            throw new Error('요청 시간 초과(8초) — 서버/네트워크 상태를 확인하세요.');
+            throw new Error(`요청 시간 초과(${Math.round(timeoutMs / 1000)}초) — 서버/네트워크 상태를 확인하세요.`);
           }
           if (err.message === 'Failed to fetch') {
-            throw new Error('연결 실패 — 서버 실행 여부, HTTPS/혼합 콘텐츠, CORS 허용 설정을 확인하세요.');
+            throw new Error('연결 실패 — 서버 실행 여부, HTTPS/혼합 콘텐츠, CORS/PNA 허용 설정을 확인하세요.');
           }
           throw err;
         } finally {
@@ -919,7 +922,8 @@
         }
       }
 
-      async function refreshStatus() {
+      async function refreshStatus(options) {
+        const silent = Boolean(options && options.silent === true);
         if (!state.serverUrl) {
           setStatusBadge('idle', '설정 대기 중');
           el('metricUptime').textContent = '-';
@@ -929,7 +933,9 @@
           return;
         }
 
-        setStatusBadge('idle', '조회 중...');
+        if (!silent) {
+          setStatusBadge('idle', '조회 중...');
+        }
         try {
           const ep = ENDPOINTS[state.mode].status;
           const data = await apiFetch(ep);
@@ -948,11 +954,15 @@
           const sessionText = pc.userSessionActive === true ? '활성' : (pc.userSessionActive === false ? '잠김/없음' : '-');
           el('metricSession').textContent = online ? `${sessionText} · ${adapterCount}NIC` : '대기';
           el('lastCheckedLabel').textContent = `최근 확인: ${new Date().toLocaleTimeString('ko-KR')}`;
-          setResultMessage(online ? '✅ PC 상태를 정상적으로 불러왔습니다.' : '⚠️ PC가 꺼져 있습니다. [PC 켜기(WoL)]로 부팅할 수 있습니다.');
+          if (!silent) {
+            setResultMessage(online ? '✅ PC 상태를 정상적으로 불러왔습니다.' : '⚠️ PC가 꺼져 있습니다. [PC 켜기(WoL)]로 부팅할 수 있습니다.');
+          }
         } catch (err) {
           setStatusBadge('error', '연결 오류');
           el('lastCheckedLabel').textContent = `최근 시도: ${new Date().toLocaleTimeString('ko-KR')}`;
-          setResultMessage(`❌ ${err.message}`, true);
+          if (!silent) {
+            setResultMessage(`❌ ${err.message}`, true);
+          }
         }
       }
 
@@ -966,7 +976,13 @@
         try {
           const data = await apiFetch(ep);
           setResultMessage(`✅ ${data.message || `${ep.label} 명령이 완료되었습니다.`}`);
-          setTimeout(refreshStatus, 1000);
+          if (postActionRefreshTimer) {
+            clearTimeout(postActionRefreshTimer);
+          }
+          postActionRefreshTimer = setTimeout(() => {
+            postActionRefreshTimer = null;
+            refreshStatus({ silent: true });
+          }, ep.refreshDelayMs || 1500);
         } catch (err) {
           setResultMessage(`❌ [${ep.label}] ${err.message}`, true);
         }
