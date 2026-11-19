@@ -950,7 +950,7 @@ def make_handler(cfg: dict, limiter: AuthLimiter, tunnel_manager: CloudflareTunn
                 if not self._require_auth():
                     return
                 relay_meta = tunnel_manager.snapshot() if tunnel_manager else {"tunnelMode": cfg.get("tunnel_mode", "none")}
-                code, data = call_pc_web(cfg, "GET", "/api/status", timeout=2.5)
+                code, data = call_pc_web(cfg, "GET", "/api/status", timeout=1.5)
                 if code == 200:
                     self._send_json(200, {"success": True, "online": True, "pc": data, "relay": relay_meta})
                 elif code in (401, 429):
