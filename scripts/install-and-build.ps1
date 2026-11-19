@@ -63,4 +63,4 @@ Write-Host "다음 순서로 실행하세요:" -ForegroundColor Yellow
 Write-Host "  1) 1_Windows_WOL_설정(관리자).bat"
 Write-Host "  2) 2_폰_원클릭_웹_설정.bat"
 Write-Host "  3) 3_웹_자동실행_방화벽_등록(관리자).bat"
-Write-Host "  4) 4_Tailscale_원격데스크톱_설정(관리자).bat (원격 화면 제어 필요 시)"
+Write-Host "  4) 4_Cloudflare_터널_외부접속_설정(관리자).bat (VPN 없이 PC 직접 외부 접속 시 / 중계기 사용 시 relay\setup_relay_cloudflare.sh 실행)"

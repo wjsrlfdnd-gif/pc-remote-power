@@ -89,7 +89,7 @@ public static class Program
                 var (authorized, statusCode, errorMessage) = guard.Authorize(context);
                 if (!authorized)
                 {
-                    WriteLog($"[인증 거부] IP={context.Connection.RemoteIpAddress}, Path={path}, Status={statusCode}");
+                    WriteLog($"[인증 거부] IP={TokenAuthGuard.ResolveClientIp(context)}, Path={path}, Status={statusCode}");
                     context.Response.StatusCode = statusCode;
                     await context.Response.WriteAsJsonAsync(new { success = false, message = errorMessage });
                     return;
@@ -156,7 +156,7 @@ public static class Program
 
         app.MapPost("/api/app/antigravity/start", async (HttpContext ctx) =>
         {
-            var clientIp = ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+            var clientIp = TokenAuthGuard.ResolveClientIp(ctx);
             var res = await PowerController.StartAntigravityAsync();
             WriteLog($"[앱 실행 요청] IP={clientIp}, App=Antigravity, Success={res.Success}, Msg={res.Message}");
             return Results.Json(
@@ -172,7 +172,7 @@ public static class Program
 
         app.MapPost("/api/power/{action}", (string action, HttpContext ctx) =>
         {
-            var clientIp = ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+            var clientIp = TokenAuthGuard.ResolveClientIp(ctx);
             var normalized = action.Trim().ToLowerInvariant();
             WriteLog($"[전원 요청] IP={clientIp}, Action={normalized}");
 

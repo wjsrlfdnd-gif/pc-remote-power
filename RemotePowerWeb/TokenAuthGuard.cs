@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -24,9 +25,45 @@ public sealed class TokenAuthGuard
         _expectedTokenBytes = Encoding.UTF8.GetBytes(expectedToken);
     }
 
+    /// <summary>
+    /// cloudflared 등 로컬 루프백 리버스 프록시를 경유한 경우 CF-Connecting-IP / X-Forwarded-For에서 실제 클라이언트 IP를 추출합니다.
+    /// </summary>
+    public static string ResolveClientIp(HttpContext context)
+    {
+        var remoteIp = context.Connection.RemoteIpAddress;
+        if (remoteIp is null)
+        {
+            return "unknown";
+        }
+
+        var normalized = remoteIp.IsIPv4MappedToIPv6 ? remoteIp.MapToIPv4() : remoteIp;
+        if (IPAddress.IsLoopback(normalized))
+        {
+            if (context.Request.Headers.TryGetValue("CF-Connecting-IP", out var cfIp))
+            {
+                var value = cfIp.ToString().Trim();
+                if (!string.IsNullOrEmpty(value) && value.Length <= 64)
+                {
+                    return value;
+                }
+            }
+
+            if (context.Request.Headers.TryGetValue("X-Forwarded-For", out var xff))
+            {
+                var first = xff.ToString().Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault();
+                if (!string.IsNullOrEmpty(first) && first.Length <= 64)
+                {
+                    return first;
+                }
+            }
+        }
+
+        return normalized.ToString();
+    }
+
     public (bool Authorized, int StatusCode, string ErrorMessage) Authorize(HttpContext context)
     {
-        var ipKey = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        var ipKey = ResolveClientIp(context);
         var now = DateTimeOffset.UtcNow;
 
         if (_attempts.TryGetValue(ipKey, out var existing) && existing.BlockedUntilUtc > now)
