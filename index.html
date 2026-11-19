@@ -819,7 +819,8 @@
           });
           if (!res.ok) return false;
           const text = await res.text();
-          let latestUrl = '';
+          let latestRelayUrl = '';
+          let latestAnyUrl = '';
           for (const line of text.split('\n')) {
             const trimmed = line.trim();
             if (!trimmed) continue;
@@ -829,27 +830,41 @@
                 try {
                   const inner = JSON.parse(evt.message);
                   const candidate = sanitizeUrl(inner.serverUrl);
-                  if (candidate) latestUrl = candidate;
+                  if (candidate) {
+                    latestAnyUrl = candidate;
+                    if (!inner.mode || inner.mode === 'relay') {
+                      latestRelayUrl = candidate;
+                    }
+                  }
                 } catch {
                   const m = evt.message.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/i);
-                  if (m) latestUrl = sanitizeUrl(m[0]);
+                  if (m) latestAnyUrl = sanitizeUrl(m[0]);
                 }
               }
             } catch {}
           }
-          if (!latestUrl) {
+          if (!latestAnyUrl) {
             const matches = text.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/gi);
             if (matches && matches.length > 0) {
-              latestUrl = sanitizeUrl(matches[matches.length - 1]);
+              latestAnyUrl = sanitizeUrl(matches[matches.length - 1]);
             }
           }
-          if (latestUrl && latestUrl !== state.serverUrl) {
-            state.serverUrl = latestUrl;
-            localStorage.setItem(STORAGE_KEYS.serverUrl, latestUrl);
-            syncFormAndUi();
-            return true;
+          const targetUrl = latestRelayUrl || latestAnyUrl;
+          let changed = false;
+          if (latestRelayUrl && state.mode !== 'relay') {
+            state.mode = 'relay';
+            localStorage.setItem(STORAGE_KEYS.mode, 'relay');
+            changed = true;
           }
-          return false;
+          if (targetUrl && targetUrl !== state.serverUrl) {
+            state.serverUrl = targetUrl;
+            localStorage.setItem(STORAGE_KEYS.serverUrl, targetUrl);
+            changed = true;
+          }
+          if (changed) {
+            syncFormAndUi();
+          }
+          return changed;
         } catch {
           return false;
         } finally {
@@ -920,11 +935,10 @@
         oneClickBtn.setAttribute('aria-checked', String(state.oneClick));
         el('oneClickLabel').textContent = state.oneClick ? '즉시 실행 ON' : '안전 확인 ON';
 
-        // Direct mode cannot wake a powered-off PC via WoL
         const powerOnBtn = el('btnPowerOn');
-        powerOnBtn.disabled = state.mode === 'direct';
+        powerOnBtn.disabled = false;
         powerOnBtn.querySelector('.sub').textContent = state.mode === 'direct'
-          ? 'PC 직접 모드에서는 WoL 미지원'
+          ? '터치 시 중계기 모드로 자동 전환하여 켜기'
           : '중계기에서 Magic Packet 전송';
 
         const isHttpsPage = window.location.protocol === 'https:';
@@ -957,7 +971,7 @@
 
       let postActionRefreshTimer = null;
 
-      async function apiFetch(endpoint, allowSyncRetry = true) {
+      async function apiFetch(endpoint, allowSyncRetry = true, actionKey = '') {
         if (!state.serverUrl && (state.token || state.syncTopic)) {
           await syncServerUrlFromTopic();
         }
@@ -965,22 +979,26 @@
           throw new Error('먼저 ⚙️ 서버 설정에서 백엔드 서버 주소를 입력하세요.');
         }
 
+        const activeEndpoint = (actionKey && ENDPOINTS[state.mode] && ENDPOINTS[state.mode][actionKey])
+          ? ENDPOINTS[state.mode][actionKey]
+          : endpoint;
+
         const headers = { 'Accept': 'application/json' };
         if (state.token) {
           headers['X-Auth-Token'] = state.token;
         }
-        if (endpoint.method === 'POST') {
+        if (activeEndpoint.method === 'POST') {
           headers['Content-Type'] = 'application/json';
         }
 
-        const timeoutMs = endpoint.timeoutMs || 8000;
+        const timeoutMs = activeEndpoint.timeoutMs || 8000;
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeoutMs);
         try {
-          const response = await fetch(`${state.serverUrl}${endpoint.path}`, {
-            method: endpoint.method,
+          const response = await fetch(`${state.serverUrl}${activeEndpoint.path}`, {
+            method: activeEndpoint.method,
             headers,
-            body: endpoint.method === 'POST' ? '{}' : undefined,
+            body: activeEndpoint.method === 'POST' ? '{}' : undefined,
             signal: controller.signal
           });
           const data = await response.json().catch(() => ({}));
@@ -989,7 +1007,7 @@
               clearTimeout(timer);
               const synced = await syncServerUrlFromTopic();
               if (synced) {
-                return await apiFetch(endpoint, false);
+                return await apiFetch(activeEndpoint, false, actionKey);
               }
             }
             throw new Error(data.message || data.error || `HTTP ${response.status} 오류`);
@@ -1000,14 +1018,14 @@
             clearTimeout(timer);
             const synced = await syncServerUrlFromTopic();
             if (synced) {
-              return await apiFetch(endpoint, false);
+              return await apiFetch(activeEndpoint, false, actionKey);
             }
           }
           if (err.name === 'AbortError') {
-            throw new Error(`요청 시간 초과(${Math.round(timeoutMs / 1000)}초) — 서버/네트워크 상태를 확인하세요.`);
+            throw new Error(`요청 시간 초과(${Math.round(timeoutMs / 1000)}초) — 중계기(Termux)가 실행 중인지 또는 서버 주소를 확인하세요.`);
           }
           if (err.message === 'Failed to fetch') {
-            throw new Error('연결 실패 — 서버 실행 여부, HTTPS/혼합 콘텐츠, CORS/PNA 허용 설정을 확인하세요.');
+            throw new Error('연결 실패 — 중계기(Termux) 실행 여부 또는 서버 주소를 확인하세요.');
           }
           throw err;
         } finally {
@@ -1031,7 +1049,7 @@
         }
         try {
           const ep = ENDPOINTS[state.mode].status;
-          const data = await apiFetch(ep);
+          const data = await apiFetch(ep, true, 'status');
           const pc = state.mode === 'relay' ? (data.pc || {}) : data;
           const online = state.mode === 'relay' ? Boolean(data.online) : Boolean(data.success);
 
@@ -1060,6 +1078,12 @@
       }
 
       async function executeAction(actionKey) {
+        if (actionKey === 'on' && state.mode === 'direct') {
+          state.mode = 'relay';
+          localStorage.setItem(STORAGE_KEYS.mode, 'relay');
+          syncFormAndUi();
+          await syncServerUrlFromTopic();
+        }
         const ep = ENDPOINTS[state.mode][actionKey];
         if (!ep) {
           setResultMessage('ℹ️ 현재 연결 모드에서는 지원하지 않는 동작입니다.', true);
@@ -1067,7 +1091,7 @@
         }
         setResultMessage(`⏳ [${ep.label}] 명령 전송 중...`);
         try {
-          const data = await apiFetch(ep);
+          const data = await apiFetch(ep, true, actionKey);
           setResultMessage(`✅ ${data.message || `${ep.label} 명령이 완료되었습니다.`}`);
           if (postActionRefreshTimer) {
             clearTimeout(postActionRefreshTimer);
@@ -1082,7 +1106,7 @@
       }
 
       function requestAction(actionKey) {
-        const ep = ENDPOINTS[state.mode][actionKey];
+        const ep = actionKey === 'on' ? ENDPOINTS.relay.on : ENDPOINTS[state.mode][actionKey];
         if (!ep) return;
         if (!state.serverUrl && !state.token && !state.syncTopic) {
           toggleConfig(true);
