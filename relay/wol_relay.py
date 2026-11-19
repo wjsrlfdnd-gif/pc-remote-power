@@ -8,6 +8,7 @@ VPN이나 공유기 포트포워딩 없이 Cloudflare Tunnel(cloudflared)을 내
 from __future__ import annotations
 
 import argparse
+import hashlib
 import hmac
 import http.server
 import ipaddress
@@ -30,7 +31,20 @@ ROOT_DIR = BASE_DIR.parent
 CONFIG_PATH = BASE_DIR / "relay-config.json"
 TUNNEL_URL_PATH = BASE_DIR / "tunnel-url.txt"
 DEFAULT_PWA_BASE_URL = "https://wjsrlfdnd-gif.github.io/pc-remote-power/"
+DEFAULT_SYNC_SERVER = "https://ntfy.sh"
+SYNC_HEARTBEAT_SEC = 10800  # 3시간마다 주소 재발행 (ntfy 12시간 캐시 만료 방지)
 TRYCLOUDFLARE_RE = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com", re.IGNORECASE)
+
+
+def derive_sync_topic(token: str, explicit_topic: str = "") -> str:
+    clean_explicit = (explicit_topic or "").strip()
+    if clean_explicit:
+        return clean_explicit
+    clean_token = (token or "").strip()
+    if not clean_token:
+        return ""
+    digest = hashlib.sha256(f"pcrp-sync:{clean_token}".encode("utf-8")).hexdigest()[:24]
+    return f"pcrp-{digest}"
 
 
 def detect_default_broadcast() -> str:
@@ -61,6 +75,7 @@ def find_cloudflared_binary() -> str | None:
         Path.home() / ".local" / "bin" / "cloudflared",
         Path("/usr/local/bin/cloudflared"),
         Path("/usr/bin/cloudflared"),
+        Path("/data/data/com.termux/files/usr/bin/cloudflared"),
         ROOT_DIR / "tools" / "cloudflared.exe",
         Path(r"C:\Program Files (x86)\cloudflared\cloudflared.exe"),
         Path(r"C:\Program Files\cloudflared\cloudflared.exe"),
@@ -71,13 +86,20 @@ def find_cloudflared_binary() -> str | None:
     return None
 
 
-def build_pwa_setup_link(public_url: str, pc_name: str, pwa_base_url: str = DEFAULT_PWA_BASE_URL) -> str:
+def build_pwa_setup_link(
+    public_url: str,
+    pc_name: str,
+    pwa_base_url: str = DEFAULT_PWA_BASE_URL,
+    sync_topic: str = "",
+) -> str:
     base = (pwa_base_url or DEFAULT_PWA_BASE_URL).strip()
     if not base:
         base = DEFAULT_PWA_BASE_URL
     params = {"server": public_url.rstrip("/"), "mode": "relay"}
     if pc_name:
         params["name"] = pc_name
+    if sync_topic:
+        params["sync"] = sync_topic
     sep = "&" if "?" in base else "?"
     return f"{base}{sep}{urllib.parse.urlencode(params)}"
 
@@ -88,6 +110,20 @@ def ensure_config(force_setup: bool = False) -> dict:
         with CONFIG_PATH.open("r", encoding="utf-8") as f:
             existing = json.load(f)
         if not force_setup:
+            updated = False
+            if not existing.get("tunnel_mode"):
+                existing["tunnel_mode"] = "quick"
+                updated = True
+            expected_sync = derive_sync_topic(existing.get("relay_token", ""), existing.get("sync_topic", ""))
+            if expected_sync and existing.get("sync_topic") != expected_sync:
+                existing["sync_topic"] = expected_sync
+                updated = True
+            if updated:
+                try:
+                    with CONFIG_PATH.open("w", encoding="utf-8") as wf:
+                        json.dump(existing, wf, ensure_ascii=False, indent=2)
+                except Exception:
+                    pass
             return existing
 
     print("=" * 60)
@@ -163,6 +199,7 @@ def ensure_config(force_setup: bool = False) -> dict:
         "cloudflare_tunnel_token": cloudflare_tunnel_token,
         "public_url": public_url,
         "notify_webhook_url": notify_webhook_url,
+        "sync_topic": derive_sync_topic(relay_token, existing.get("sync_topic", "")),
         "pwa_base_url": existing.get("pwa_base_url") or DEFAULT_PWA_BASE_URL,
         "duckdns_domain": duckdns_domain,
         "duckdns_token": duckdns_token,
@@ -569,6 +606,44 @@ def send_tunnel_url_notification(webhook_url: str, pc_name: str, public_url: str
         print(f"[알림 전송 실패] {e}")
 
 
+def publish_sync_url(
+    sync_topic: str,
+    public_url: str,
+    pc_name: str,
+    mode: str = "relay",
+    sync_server: str = DEFAULT_SYNC_SERVER,
+) -> bool:
+    topic = (sync_topic or "").strip()
+    url = (public_url or "").strip().rstrip("/")
+    server = (sync_server or DEFAULT_SYNC_SERVER).strip().rstrip("/")
+    if not topic or not url or not server:
+        return False
+    payload = json.dumps(
+        {
+            "serverUrl": url,
+            "pcName": pc_name,
+            "mode": mode,
+            "ts": int(time.time()),
+        },
+        ensure_ascii=False,
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        f"{server}/{urllib.parse.quote(topic)}",
+        data=payload,
+        method="POST",
+        headers={
+            "Content-Type": "text/plain; charset=utf-8",
+            "User-Agent": "pc-remote-power-sync/1.0",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            return 200 <= resp.status < 300
+    except Exception as e:
+        print(f"[주소 자동 동기화 대기] {e}")
+        return False
+
+
 class CloudflareTunnelManager:
     def __init__(self, cfg: dict, relay_port: int):
         self.cfg = cfg
@@ -576,10 +651,14 @@ class CloudflareTunnelManager:
         self.mode = (cfg.get("tunnel_mode") or "none").strip().lower()
         self.token = (cfg.get("cloudflare_tunnel_token") or "").strip()
         self.public_url = (cfg.get("public_url") or "").strip().rstrip("/")
+        self.sync_topic = derive_sync_topic(cfg.get("relay_token", ""), cfg.get("sync_topic", ""))
+        self.sync_server = (cfg.get("sync_server") or DEFAULT_SYNC_SERVER).strip().rstrip("/")
         self._stop = threading.Event()
+        self._sync_event = threading.Event()
         self._proc: subprocess.Popen[str] | None = None
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
+        self._sync_thread: threading.Thread | None = None
         self.running = False
         self.last_error = ""
 
@@ -589,6 +668,7 @@ class CloudflareTunnelManager:
                 "tunnelMode": self.mode,
                 "tunnelRunning": self.running,
                 "publicUrl": self.public_url,
+                "syncTopic": self.sync_topic,
                 "error": self.last_error,
             }
 
@@ -609,8 +689,33 @@ class CloudflareTunnelManager:
             print("  - Windows: winget install -e --id Cloudflare.cloudflared")
             return
 
+        if self.sync_topic:
+            self._sync_thread = threading.Thread(target=self._sync_loop, daemon=True)
+            self._sync_thread.start()
+
         self._thread = threading.Thread(target=self._run_loop, args=(binary,), daemon=True)
         self._thread.start()
+
+    def _sync_loop(self) -> None:
+        retry_soon = False
+        while not self._stop.is_set():
+            wait_sec = 15 if retry_soon else SYNC_HEARTBEAT_SEC
+            self._sync_event.wait(timeout=wait_sec)
+            if self._stop.is_set():
+                break
+            self._sync_event.clear()
+            with self._lock:
+                url = self.public_url
+            if not url or not self.sync_topic:
+                retry_soon = False
+                continue
+            pc_name = self.cfg.get("pc_name", "My-PC")
+            ok = publish_sync_url(self.sync_topic, url, pc_name, "relay", self.sync_server)
+            if ok:
+                print(f"[주소 자동 동기화 완료] 재부팅 후에도 스마트폰 PWA가 새 주소를 자동으로 찾아 연결합니다 ({self.sync_topic})")
+                retry_soon = False
+            else:
+                retry_soon = True
 
     def _run_loop(self, binary: str) -> None:
         while not self._stop.is_set():
@@ -681,7 +786,12 @@ class CloudflareTunnelManager:
 
     def _announce_url(self, url: str) -> None:
         pc_name = self.cfg.get("pc_name", "My-PC")
-        pwa_link = build_pwa_setup_link(url, pc_name, self.cfg.get("pwa_base_url", DEFAULT_PWA_BASE_URL))
+        pwa_link = build_pwa_setup_link(
+            url,
+            pc_name,
+            self.cfg.get("pwa_base_url", DEFAULT_PWA_BASE_URL),
+            self.sync_topic,
+        )
         try:
             TUNNEL_URL_PATH.write_text(f"{url}\n{pwa_link}\n", encoding="utf-8")
         except Exception:
@@ -692,10 +802,12 @@ class CloudflareTunnelManager:
         print("  🌐 VPN 없이 외부 접속 가능! (Cloudflare Tunnel HTTPS 활성)")
         print(f"  • 서버 주소       : {url}")
         print(f"  • PWA 자동 설정   : {pwa_link}")
-        print("    (위 링크를 폰 브라우저에서 열면 서버 주소가 자동 입력됩니다. 토큰만 1회 입력!)")
+        print("    (재부팅으로 주소가 바뀌어도 스마트폰 PWA가 새 주소를 자동 동기화합니다!)")
         print(f"  • 중계기 직접 접속: {url}/?token={self.cfg['relay_token']}")
         print("=" * 64)
         print("")
+
+        self._sync_event.set()
 
         webhook = (self.cfg.get("notify_webhook_url") or "").strip()
         if webhook:
@@ -707,6 +819,7 @@ class CloudflareTunnelManager:
 
     def stop(self) -> None:
         self._stop.set()
+        self._sync_event.set()
         with self._lock:
             proc = self._proc
         if proc and proc.poll() is None:
@@ -909,6 +1022,10 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+class ReusableThreadingHTTPServer(http.server.ThreadingHTTPServer):
+    allow_reuse_address = True
+
+
 def main() -> None:
     args = parse_args()
     cfg = ensure_config(force_setup=(args.setup or args.setup_only))
@@ -920,13 +1037,19 @@ def main() -> None:
     elif args.tunnel:
         cfg = dict(cfg)
         cfg["tunnel_mode"] = args.tunnel
+        if CONFIG_PATH.exists():
+            try:
+                with CONFIG_PATH.open("w", encoding="utf-8") as wf:
+                    json.dump(cfg, wf, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
 
     if cfg.get("duckdns_domain") and cfg.get("duckdns_token"):
         threading.Thread(target=duckdns_loop, args=(cfg,), daemon=True).start()
 
     port = int(cfg.get("relay_port", 18090))
     tunnel = CloudflareTunnelManager(cfg, port)
-    server = http.server.ThreadingHTTPServer(("0.0.0.0", port), make_handler(cfg, AuthLimiter(cfg["relay_token"]), tunnel))
+    server = ReusableThreadingHTTPServer(("0.0.0.0", port), make_handler(cfg, AuthLimiter(cfg["relay_token"]), tunnel))
     print(f"통합 원격 전원 중계기 실행 중: http://0.0.0.0:{port}/?token={cfg['relay_token']}")
     tunnel.start()
     try:
