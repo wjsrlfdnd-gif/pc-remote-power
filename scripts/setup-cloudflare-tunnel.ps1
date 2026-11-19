@@ -105,6 +105,19 @@ if (-not $isAdmin) {
             Write-Host ""
             Get-Content -Path $setupLogPath -Encoding UTF8 | Select-Object -Last 35 | ForEach-Object { Write-Host $_ }
         }
+        if (Test-Path $urlFilePath) {
+            $uLines = Get-Content -Path $urlFilePath -Encoding UTF8
+            if ($uLines.Count -ge 2 -and -not [string]::IsNullOrWhiteSpace($uLines[1])) {
+                $clipLink = $uLines[1].Trim()
+                if ((Test-Path $webConfigPath)) {
+                    $wcfg2 = Get-Content -Path $webConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                    if ($wcfg2.ApiToken) {
+                        $clipLink = "$clipLink&token=$([Uri]::EscapeDataString($wcfg2.ApiToken.ToString()))"
+                    }
+                }
+                try { Set-Clipboard -Value $clipLink -ErrorAction SilentlyContinue } catch {}
+            }
+        }
         exit $proc.ExitCode
     }
     catch {
@@ -117,6 +130,14 @@ $logDir = Split-Path -Parent $setupLogPath
 if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
 Start-Transcript -Path $setupLogPath -Force | Out-Null
 try {
+    # 구버전 중복 배치 파일 자동 정리
+    $legacyBat = Join-Path $projectRoot "4_Tailscale_원격데스크톱_설정(관리자).bat"
+    $newOptionalBat = Join-Path $projectRoot "optional_Tailscale_원격데스크톱_설정(관리자).bat"
+    if ((Test-Path $legacyBat) -and (Test-Path $newOptionalBat)) {
+        Remove-Item -Path $legacyBat -Force -ErrorAction SilentlyContinue
+        Write-Host "[정리 완료] 이전 버전의 중복 파일(4_Tailscale_...bat)을 정리했습니다." -ForegroundColor Green
+    }
+
     $targetPort = 18080
     $pcName = $env:COMPUTERNAME
     $apiToken = ""
@@ -125,6 +146,30 @@ try {
         if ($wcfg.ListenPort) { $targetPort = [int]$wcfg.ListenPort }
         if ($wcfg.PcDisplayName) { $pcName = $wcfg.PcDisplayName.ToString() }
         if ($wcfg.ApiToken) { $apiToken = $wcfg.ApiToken.ToString() }
+    }
+
+    # RemotePowerWeb 최신 코드 자동 반영 및 백그라운드 웹 서버 기동 확인
+    $webTaskName = "PCRemotePowerWeb"
+    $webProj = Join-Path $projectRoot "RemotePowerWeb\RemotePowerWeb.csproj"
+    $webDir = Join-Path $projectRoot "web-app"
+    $stagingDir = Join-Path $projectRoot "web-app-staging"
+    $dotnetCmd = Get-Command dotnet -ErrorAction SilentlyContinue
+    if ($null -ne $dotnetCmd -and (Test-Path $webProj)) {
+        Write-Host "[자동 업데이트] RemotePowerWeb 최신 보안 패치 빌드 중..." -ForegroundColor Cyan
+        & dotnet publish $webProj -c Release -o $stagingDir --nologo -v q
+    }
+    if (Test-Path $stagingDir) {
+        Stop-ScheduledTask -TaskName $webTaskName -ErrorAction SilentlyContinue
+        Start-Sleep -Milliseconds 700
+        Get-Process -Name "RemotePowerWeb" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Milliseconds 400
+        if (-not (Test-Path $webDir)) { New-Item -ItemType Directory -Path $webDir -Force | Out-Null }
+        Copy-Item -Path (Join-Path $stagingDir "*") -Destination $webDir -Recurse -Force
+        Remove-Item -Path $stagingDir -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Host "[자동 업데이트 완료] 최신 RemotePowerWeb 빌드를 web-app에 반영했습니다." -ForegroundColor Green
+    }
+    if ($null -ne (Get-ScheduledTask -TaskName $webTaskName -ErrorAction SilentlyContinue)) {
+        Start-ScheduledTask -TaskName $webTaskName -ErrorAction SilentlyContinue
     }
 
     # 기존 tunnel-config.json이 있으면 로드 (비승격 단계에서 저장된 값 유지)
@@ -233,13 +278,17 @@ try {
         if ($foundLines -and $foundLines.Count -ge 1) {
             $liveUrl = $foundLines[0].Trim()
             $pwaLink = if ($foundLines.Count -ge 2) { $foundLines[1].Trim() } else { "${pwaBaseUrl}?server=$([Uri]::EscapeDataString($liveUrl))&mode=direct" }
+            $fullOneClickLink = if (-not [string]::IsNullOrWhiteSpace($apiToken)) {
+                "$pwaLink&token=$([Uri]::EscapeDataString($apiToken))"
+            } else {
+                $pwaLink
+            }
+            try { Set-Clipboard -Value $fullOneClickLink -ErrorAction SilentlyContinue } catch {}
             Write-Host ""
             Write-Host "==================== VPN 없이 외부 접속 준비 완료 ====================" -ForegroundColor Yellow
-            Write-Host "  HTTPS 서버 주소 : $liveUrl" -ForegroundColor Cyan
-            Write-Host "  PWA 자동 설정   : $pwaLink" -ForegroundColor Green
-            if (-not [string]::IsNullOrWhiteSpace($apiToken)) {
-                Write-Host "  ApiToken (참고) : $apiToken" -ForegroundColor White
-            }
+            Write-Host "  HTTPS 서버 주소    : $liveUrl" -ForegroundColor Cyan
+            Write-Host "  폰 원클릭 자동설정 : $fullOneClickLink" -ForegroundColor Green
+            Write-Host "  (위 원클릭 링크가 클립보드에 자동 복사되었습니다! 카톡 나에게 보내기로 폰에서 여세요)" -ForegroundColor White
             Write-Host "======================================================================" -ForegroundColor Yellow
         }
         else {
@@ -253,7 +302,14 @@ try {
         Write-Host "  Service: HTTP / URL: 127.0.0.1:$targetPort 로 연결해 두시면 됩니다." -ForegroundColor Cyan
         if (-not [string]::IsNullOrWhiteSpace($PublicUrl)) {
             $pwaLink = "${pwaBaseUrl}?server=$([Uri]::EscapeDataString($PublicUrl))&mode=direct&name=$([Uri]::EscapeDataString($pcName))"
-            Write-Host "  PWA 자동 설정   : $pwaLink" -ForegroundColor Green
+            $fullOneClickLink = if (-not [string]::IsNullOrWhiteSpace($apiToken)) {
+                "$pwaLink&token=$([Uri]::EscapeDataString($apiToken))"
+            } else {
+                $pwaLink
+            }
+            try { Set-Clipboard -Value $fullOneClickLink -ErrorAction SilentlyContinue } catch {}
+            Write-Host "  폰 원클릭 자동설정 : $fullOneClickLink" -ForegroundColor Green
+            Write-Host "  (클립보드에 자동 복사됨)" -ForegroundColor White
         }
         Write-Host "================================================================" -ForegroundColor Yellow
     }
