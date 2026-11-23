@@ -416,6 +416,33 @@
     .act-cancel {
       border-color: rgba(148, 163, 184, 0.35);
     }
+    .act-crd {
+      grid-column: 1 / -1;
+      text-decoration: none;
+      flex-direction: row;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 58px;
+      padding: 10px 14px;
+      border-color: rgba(45, 212, 191, 0.48);
+      background: linear-gradient(135deg, rgba(15, 118, 110, 0.45), rgba(14, 116, 144, 0.35) 55%, rgba(15, 23, 42, 0.95));
+    }
+    .act-crd .crd-left {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      min-width: 0;
+    }
+    .act-crd .crd-pill {
+      flex-shrink: 0;
+      font-size: 11px;
+      font-weight: 800;
+      padding: 5px 10px;
+      border-radius: 999px;
+      color: #ccfbf1;
+      background: rgba(20, 184, 166, 0.22);
+      border: 1px solid rgba(45, 212, 191, 0.45);
+    }
 
     /* Feedback banner & footer */
     .result-banner {
@@ -527,6 +554,8 @@
         gap: 6px;
       }
       .power-btn { min-height: 48px; padding: 6px 9px; gap: 2px; border-radius: 12px; }
+      .power-btn.act-crd { min-height: 38px; padding: 5px 10px; }
+      .power-btn.act-crd .crd-left { flex-direction: row; align-items: center; gap: 8px; }
       .power-btn .icon-row { font-size: 12.5px; gap: 5px; }
       .power-btn .sub {
         font-size: 10px;
@@ -657,6 +686,14 @@
         <div class="icon-row">🚀 Antigravity 실행</div>
         <div class="sub">원격으로 작업 앱 즉시 기동</div>
       </button>
+
+      <a id="btnChromeRemote" class="power-btn act-crd" href="https://remotedesktop.google.com/access" target="_blank" rel="noopener noreferrer">
+        <div class="crd-left">
+          <div class="icon-row">🖥️ Chrome 원격 데스크톱 연결</div>
+          <div class="sub">스마트폰으로 PC 화면 바로 조작 (앱/웹 열기)</div>
+        </div>
+        <span class="crd-pill">연결 ↗</span>
+      </a>
 
       <button id="btnSleep" type="button" class="power-btn act-sleep" data-action="sleep">
         <div class="icon-row">🌙 절전 모드</div>
@@ -824,29 +861,13 @@
           for (const line of text.split('\n')) {
             const trimmed = line.trim();
             if (!trimmed) continue;
-            try {
-              const evt = JSON.parse(trimmed);
-              if (evt && evt.event === 'message' && typeof evt.message === 'string') {
-                try {
-                  const inner = JSON.parse(evt.message);
-                  const candidate = sanitizeUrl(inner.serverUrl);
-                  if (candidate) {
-                    latestAnyUrl = candidate;
-                    if (!inner.mode || inner.mode === 'relay') {
-                      latestRelayUrl = candidate;
-                    }
-                  }
-                } catch {
-                  const m = evt.message.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/i);
-                  if (m) latestAnyUrl = sanitizeUrl(m[0]);
-                }
-              }
-            } catch {}
-          }
-          if (!latestAnyUrl) {
-            const matches = text.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/gi);
-            if (matches && matches.length > 0) {
-              latestAnyUrl = sanitizeUrl(matches[matches.length - 1]);
+            const m = trimmed.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/i);
+            if (!m) continue;
+            const candidate = sanitizeUrl(m[0]);
+            if (!candidate) continue;
+            latestAnyUrl = candidate;
+            if (!trimmed.includes('|direct|') && !trimmed.includes('"mode":"direct"') && !trimmed.includes('"mode": "direct"')) {
+              latestRelayUrl = candidate;
             }
           }
           const targetUrl = latestRelayUrl || latestAnyUrl;
@@ -1219,6 +1240,18 @@
         document.querySelectorAll('.power-btn[data-action]').forEach((btn) => {
           btn.addEventListener('click', () => requestAction(btn.dataset.action));
         });
+
+        const crdLink = el('btnChromeRemote');
+        if (crdLink) {
+          const isAndroid = /Android/i.test(navigator.userAgent || '');
+          if (isAndroid) {
+            crdLink.href = 'intent://remotedesktop.google.com/access#Intent;scheme=https;package=com.google.chromeremotedesktop;S.browser_fallback_url=https%3A%2F%2Fremotedesktop.google.com%2Faccess;end';
+            crdLink.removeAttribute('target');
+          }
+          crdLink.addEventListener('click', () => {
+            setResultMessage('🖥️ Chrome 원격 데스크톱을 여는 중입니다...');
+          });
+        }
 
         el('btnConfirmCancel').addEventListener('click', () => {
           state.pendingAction = null;

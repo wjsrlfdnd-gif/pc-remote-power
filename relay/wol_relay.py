@@ -318,6 +318,8 @@ def build_html(cfg: dict) -> str:
     button:active {{ transform:scale(0.97); }}
     .btn-on {{ background:linear-gradient(135deg,#16a34a,#15803d); grid-column:span 2; padding:22px; font-size:18px; }}
     .btn-agy {{ background:linear-gradient(135deg,#7c3aed,#5b21b6); grid-column:span 2; padding:18px; font-size:17px; }}
+    .btn-crd {{ background:linear-gradient(135deg,#0d9488,#0284c7); grid-column:span 2; padding:18px; font-size:17px; border-radius:16px; color:#fff; font-weight:700; text-decoration:none; display:flex; flex-direction:column; align-items:center; gap:5px; }}
+    .btn-crd:active {{ transform:scale(0.97); }}
     .btn-off {{ background:linear-gradient(135deg,#dc2626,#b91c1c); grid-column:span 2; padding:20px; font-size:17px; }}
     .btn-sleep {{ background:linear-gradient(135deg,#2563eb,#1d4ed8); }}
     .btn-reboot {{ background:linear-gradient(135deg,#d97706,#b45309); }}
@@ -370,6 +372,10 @@ def build_html(cfg: dict) -> str:
           <span>🚀 Antigravity 켜기</span>
           <span class="sub">PC에서 Remote Control 앱 실행</span>
         </button>
+        <a id="btnChromeRemote" class="btn-crd" href="https://remotedesktop.google.com/access" target="_blank" rel="noopener noreferrer">
+          <span>🖥️ Chrome 원격 데스크톱 연결</span>
+          <span class="sub">스마트폰으로 PC 화면 바로 조작 (앱/웹 열기)</span>
+        </a>
         <button class="btn-off" onclick="trigger('off', 'PC를 종료')">
           <span>⏻ 전원 끄기</span>
           <span class="sub">Windows 정상 종료</span>
@@ -441,6 +447,11 @@ def build_html(cfg: dict) -> str:
       document.getElementById('uAgy').textContent = location.origin + '/api/pc/antigravity/start';
       document.getElementById('uOff').textContent = location.origin + '/api/pc/off';
       document.getElementById('uSleep').textContent = location.origin + '/api/pc/sleep';
+      const crd = document.getElementById('btnChromeRemote');
+      if (crd && /Android/i.test(navigator.userAgent || '')) {{
+        crd.href = 'intent://remotedesktop.google.com/access#Intent;scheme=https;package=com.google.chromeremotedesktop;S.browser_fallback_url=https%3A%2F%2Fremotedesktop.google.com%2Faccess;end';
+        crd.removeAttribute('target');
+      }}
     }})();
     function getToken() {{ return localStorage.getItem(TOKEN_KEY) || ''; }}
     function toggleTokenPanel(force) {{
@@ -618,15 +629,7 @@ def publish_sync_url(
     server = (sync_server or DEFAULT_SYNC_SERVER).strip().rstrip("/")
     if not topic or not url or not server:
         return False
-    payload = json.dumps(
-        {
-            "serverUrl": url,
-            "pcName": pc_name,
-            "mode": mode,
-            "ts": int(time.time()),
-        },
-        ensure_ascii=False,
-    ).encode("utf-8")
+    payload = f"PCRP_SYNC|{mode}|{url}|{pc_name}".encode("utf-8")
     req = urllib.request.Request(
         f"{server}/{urllib.parse.quote(topic)}",
         data=payload,
