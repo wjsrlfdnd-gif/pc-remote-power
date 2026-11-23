@@ -169,6 +169,13 @@ self.addEventListener('fetch', (event) => {
     .btn-off { background: linear-gradient(135deg, #dc2626, #b91c1c); grid-column: span 2; padding: 22px; font-size: 18px; }
     .btn-sleep { background: linear-gradient(135deg, #2563eb, #1d4ed8); }
     .btn-reboot { background: linear-gradient(135deg, #d97706, #b45309); }
+    .btn-crd {
+      background: linear-gradient(135deg, #0d9488, #0284c7);
+      grid-column: span 2; padding: 18px; font-size: 17px; border-radius: 16px;
+      color: #fff; font-weight: 700; text-decoration: none;
+      display: flex; flex-direction: column; align-items: center; gap: 6px;
+    }
+    .btn-crd:active { transform: scale(0.97); }
     .btn-cancel { background: #334155; grid-column: span 2; padding: 14px; font-size: 15px; }
     .btn-install {
       background: linear-gradient(135deg, #0ea5e9, #2563eb);
@@ -228,6 +235,10 @@ self.addEventListener('fetch', (event) => {
           <span>🚀 Antigravity 켜기</span>
           <span class="sub">PC에서 Remote Control 앱 실행</span>
         </button>
+        <a id="btnChromeRemote" class="btn-crd" href="https://remotedesktop.google.com/access" target="_blank" rel="noopener noreferrer">
+          <span>🖥️ Chrome 원격 데스크톱 연결</span>
+          <span class="sub">스마트폰으로 PC 화면 바로 조작 (앱/웹 열기)</span>
+        </a>
         <button class="btn-off" onclick="triggerPower('shutdown', 'PC를 종료')">
           <span>⏻ 전원 끄기</span>
           <span class="sub">{{delaySeconds}}초 후 정상 종료</span>
@@ -310,6 +321,11 @@ self.addEventListener('fetch', (event) => {
       document.getElementById('shortcutShutdownUrl').textContent = window.location.origin + '/api/power/shutdown';
       document.getElementById('shortcutSleepUrl').textContent = window.location.origin + '/api/power/sleep';
       document.getElementById('shortcutAgyUrl').textContent = window.location.origin + '/api/app/antigravity/start';
+      const crd = document.getElementById('btnChromeRemote');
+      if (crd && /Android/i.test(navigator.userAgent || '')) {
+        crd.href = 'intent://remotedesktop.google.com/access#Intent;scheme=https;package=com.google.chromeremotedesktop;S.browser_fallback_url=https%3A%2F%2Fremotedesktop.google.com%2Faccess;end';
+        crd.removeAttribute('target');
+      }
     }
 
     function getToken() {

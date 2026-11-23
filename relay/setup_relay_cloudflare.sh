@@ -71,12 +71,16 @@ install_termux_boot() {
   mkdir -p "$boot_dir"
   cat > "$boot_file" <<EOF
 #!/data/data/com.termux/files/usr/bin/sh
-termux-wake-lock
+export PATH="/data/data/com.termux/files/usr/bin:\$PATH"
+termux-wake-lock 2>/dev/null || true
 cd "$SCRIPT_DIR"
-nohup python "$RELAY_SCRIPT" > "$SCRIPT_DIR/relay.log" 2>&1 &
+pkill -f wol_relay.py 2>/dev/null || killall python 2>/dev/null || true
+pkill -f cloudflared 2>/dev/null || killall cloudflared 2>/dev/null || true
+sleep 1
+nohup python "$RELAY_SCRIPT" --tunnel quick > "$SCRIPT_DIR/relay.log" 2>&1 &
 EOF
   chmod +x "$boot_file"
-  echo "[자동 실행 등록 완료] $boot_file (Termux:Boot 앱이 설치되어 있으면 부팅 시 자동 시작됩니다.)"
+  echo "[자동 실행 등록 완료] $boot_file (Termux:Boot 앱이 설치되어 있으면 재부팅 시 자동 시작됩니다.)"
 }
 
 install_systemd_service() {
